@@ -1,0 +1,19 @@
+{
+  "name": "github-qiita-x",
+  "version": "0.1.0",
+  "description": "GithubQiitaX CLIの骨組み",
+  "private": true,
+  "type": "commonjs",
+  "bin": {
+    "github-qiita-x": "bin/github-qiita-x.js"
+  },
+  "files": [
+    "bin/"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
