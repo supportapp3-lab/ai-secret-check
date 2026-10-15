@@ -248,7 +248,9 @@ function renderText(results, warnings) {
     if (item.suggestions.claudeCode) {
       lines.push(`  修正例: Claude Code: ${item.suggestions.claudeCode}`);
     }
-    lines.push(`  修正例: Cursor: ${item.suggestions.cursor}`);
+    if (item.agents.cursor === '除外設定なし → 読める可能性あり') {
+      lines.push(`  修正例: Cursor: ${item.suggestions.cursor}`);
+    }
     for (const warning of item.warnings) lines.push(`  警告: ${warning}`);
   }
   for (const warning of warnings) lines.push(`警告: ${warning}`);
