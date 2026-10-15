@@ -137,9 +137,7 @@ function loadClaudeDenyPatterns(root, warnings) {
       }
       text = fs.readFileSync(fullPath, 'utf8');
     } catch (error) {
-      if (error.code === 'ENOENT') {
-        if (required) warnings.push(`${source} が見つかりません`);
-      } else {
+      if (error.code !== 'ENOENT') {
         warnings.push(`${source} を確認できません`);
       }
       continue;
