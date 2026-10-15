@@ -308,7 +308,7 @@ function scanLogs() {
 
   const patterns = [
     { type: 'Anthropic APIキー形式', regex: /sk-ant-[A-Za-z0-9_-]{10,}/g },
-    { type: 'APIキー形式 (sk-)', regex: /sk-[A-Za-z0-9]{20,}/g },
+    { type: 'APIキー形式 (sk-)', regex: /sk-(?!ant-)[A-Za-z0-9_-]{20,}/g },
     { type: 'GitHubトークン形式 (ghp_)', regex: /ghp_[A-Za-z0-9]{20,}/g },
     { type: 'GitHubトークン形式 (github_pat_)', regex: /github_pat_[A-Za-z0-9_]{20,}/g },
     { type: 'AWSアクセスキーID形式', regex: /AKIA[A-Z0-9]{16}/g },
@@ -333,6 +333,14 @@ function scanLogs() {
       const relativePath = relativeDirectory ? path.join(relativeDirectory, entry.name) : entry.name;
       const fullPath = path.join(directory, entry.name);
       if (entry.isDirectory()) {
+        let stat;
+        try {
+          stat = fs.lstatSync(fullPath);
+        } catch {
+          errors.push(relativePath);
+          continue;
+        }
+        if (stat.isSymbolicLink() || !stat.isDirectory()) continue;
         visit(fullPath, relativePath);
         continue;
       }
