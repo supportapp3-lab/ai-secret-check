@@ -221,6 +221,23 @@ test('.cursorignore matches gitignore-style patterns and documents its limit', (
   assert.doesNotMatch(result.stdout, /CURSOR_SECRET|PRIVATE_KEY/);
 });
 
+test('text output omits Cursor correction for excluded paths but retains it for other paths', (t) => {
+  const ignoredRoot = makeFixture(t);
+  write(ignoredRoot, '.env', 'CURSOR_SECRET');
+  write(ignoredRoot, '.cursorignore', '.env\n');
+
+  const ignored = run(['scan', ignoredRoot], os.tmpdir());
+  assert.equal(ignored.status, 1);
+  assert.match(ignored.stdout, /Cursor: 除外設定あり/);
+  assert.doesNotMatch(ignored.stdout, /修正例: Cursor: \.\/\.env/);
+
+  const ordinaryRoot = makeFixture(t);
+  write(ordinaryRoot, '.env', 'CURSOR_SECRET');
+  const ordinary = run(['scan', ordinaryRoot], os.tmpdir());
+  assert.equal(ordinary.status, 1);
+  assert.match(ordinary.stdout, /修正例: Cursor: \.\/\.env を \.cursorignore に追加/);
+});
+
 test('Codex reports project config presence only without reading its contents', (t) => {
   const root = makeFixture(t);
   write(root, '.env', 'CODEX_SECRET');
