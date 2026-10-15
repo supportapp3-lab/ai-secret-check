@@ -250,7 +250,7 @@ function renderText(results, warnings) {
     if (item.suggestions.claudeCode) {
       lines.push(`  修正例: Claude Code: ${item.suggestions.claudeCode}`);
     }
-    lines.push(`          Cursor: ${item.suggestions.cursor}`);
+    lines.push(`  修正例: Cursor: ${item.suggestions.cursor}`);
     for (const warning of item.warnings) lines.push(`  警告: ${warning}`);
   }
   for (const warning of warnings) lines.push(`警告: ${warning}`);
