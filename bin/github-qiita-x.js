@@ -2,6 +2,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { version } = require('../package.json');
 
@@ -114,9 +115,36 @@ function readTextIfPresent(root, relativePath, warnings) {
 
 function loadClaudeDenyPatterns(root, warnings) {
   const patterns = [];
-  for (const relativePath of ['.claude/settings.json', '.claude/settings.local.json']) {
-    const text = readTextIfPresent(root, relativePath, warnings);
-    if (text === null) continue;
+  const configDir = process.env.CLAUDE_CONFIG_DIR;
+  const homeDir = process.env.HOME || os.homedir();
+  const settingsFiles = [
+    { fullPath: path.join(root, '.claude/settings.json'), source: '.claude/settings.json' },
+    { fullPath: path.join(root, '.claude/settings.local.json'), source: '.claude/settings.local.json' },
+    {
+      fullPath: path.join(configDir || path.join(homeDir, '.claude'), 'settings.json'),
+      source: configDir ? 'CLAUDE_CONFIG_DIR/settings.json' : '~/.claude/settings.json',
+      required: true,
+    },
+  ];
+
+  for (const { fullPath, source, required = false } of settingsFiles) {
+    let text;
+    try {
+      const stat = fs.lstatSync(fullPath);
+      if (stat.isSymbolicLink() || !stat.isFile()) {
+        if (required) warnings.push(`${source} を確認できません`);
+        continue;
+      }
+      text = fs.readFileSync(fullPath, 'utf8');
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        if (required) warnings.push(`${source} が見つかりません`);
+      } else {
+        warnings.push(`${source} を確認できません`);
+      }
+      continue;
+    }
+
     try {
       const settings = JSON.parse(text);
       const deny = settings && settings.permissions && settings.permissions.deny;
@@ -124,11 +152,11 @@ function loadClaudeDenyPatterns(root, warnings) {
         for (const rule of deny) {
           if (typeof rule !== 'string') continue;
           const match = /^Read\((.*)\)$/.exec(rule.trim());
-          if (match) patterns.push(match[1]);
+          if (match) patterns.push({ pattern: match[1], source });
         }
       }
     } catch {
-      warnings.push(`${relativePath} はJSONとして読めず、拒否設定を判定できません`);
+      warnings.push(`${source} はJSONとして読めず、拒否設定を判定できません`);
     }
   }
   return patterns;
@@ -184,13 +212,14 @@ function assessFiles(root, files, warnings) {
   const codexConfigExists = Boolean(codexConfigStat && codexConfigStat.isFile());
 
   return files.map((file) => {
-    const claudeDenied = claudeDenyPatterns.some((pattern) => globMatches(file.path, pattern));
+    const claudeDeny = claudeDenyPatterns.find(({ pattern }) => globMatches(file.path, pattern));
+    const claudeDenied = Boolean(claudeDeny);
     const cursorIgnored = matchesIgnoreFile(file.path, cursorPatterns);
     return {
       ...file,
       agents: {
         claudeCode: claudeDenied
-          ? '拒否設定あり'
+          ? `拒否設定あり（${claudeDeny.source}）`
           : '拒否設定なし → 読める可能性あり',
         cursor: cursorIgnored
           ? '除外設定あり（ただし完全ではない可能性）'
@@ -200,7 +229,7 @@ function assessFiles(root, files, warnings) {
           : '設定で防ぐ方法が未確認のため、読める可能性あり',
       },
       suggestions: {
-        claudeCode: `"Read(./${file.path})" を permissions.deny に追加`,
+        claudeCode: claudeDenied ? null : `"Read(./${file.path})" を permissions.deny に追加`,
         cursor: `./${file.path} を .cursorignore に追加`,
       },
       warnings: [
@@ -218,7 +247,9 @@ function renderText(results, warnings) {
     lines.push(`  Claude Code: ${item.agents.claudeCode}`);
     lines.push(`  Cursor: ${item.agents.cursor}`);
     lines.push(`  Codex: ${item.agents.codex}`);
-    lines.push(`  修正例: Claude Code: ${item.suggestions.claudeCode}`);
+    if (item.suggestions.claudeCode) {
+      lines.push(`  修正例: Claude Code: ${item.suggestions.claudeCode}`);
+    }
     lines.push(`          Cursor: ${item.suggestions.cursor}`);
     for (const warning of item.warnings) lines.push(`  警告: ${warning}`);
   }
