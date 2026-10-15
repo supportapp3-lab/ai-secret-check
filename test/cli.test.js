@@ -115,6 +115,19 @@ test('Claude Code deny rules distinguish matching from non-matching paths', (t) 
   assert.doesNotMatch(textResult.stdout, /修正例: Claude Code: "Read\(\.\/\.env\)"/);
 });
 
+test('text output labels Cursor correction examples when the Claude Code example is omitted', (t) => {
+  const root = makeFixture(t);
+  write(root, '.env', 'SECRET_VALUE_SHOULD_NOT_APPEAR');
+  write(root, '.claude/settings.json', JSON.stringify({
+    permissions: { deny: ['Read(./.env)'] },
+  }));
+
+  const result = run(['scan', root], os.tmpdir());
+  assert.equal(result.status, 1);
+  assert.doesNotMatch(result.stdout, /修正例: Claude Code:/);
+  assert.match(result.stdout, /修正例: Cursor: \.\/\.env を \.cursorignore に追加/);
+});
+
 test('user Claude deny rules are merged and their source is reported', (t) => {
   const root = makeFixture(t);
   const home = makeFixture(t);
