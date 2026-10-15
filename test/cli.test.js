@@ -22,10 +22,17 @@ function write(root, relativePath, content = '') {
   fs.writeFileSync(target, content);
 }
 
-function run(args, cwd) {
+function run(args, cwd, envOverrides = {}) {
+  const env = {
+    ...process.env,
+    HOME: path.join(os.tmpdir(), 'github-qiita-x-empty-home'),
+    CLAUDE_CONFIG_DIR: '',
+    ...envOverrides,
+  };
   return spawnSync(process.execPath, [cliPath, ...args], {
     encoding: 'utf8',
     cwd,
+    env,
   });
 }
 
@@ -95,10 +102,76 @@ test('Claude Code deny rules distinguish matching from non-matching paths', (t) 
   const result = run(['scan', root, '--json'], os.tmpdir());
   assert.equal(result.status, 1);
   const output = JSON.parse(result.stdout);
-  assert.equal(output.results.find((item) => item.path === '.env').agents.claudeCode, '拒否設定あり');
+  const deniedEnv = output.results.find((item) => item.path === '.env');
+  assert.equal(deniedEnv.agents.claudeCode, '拒否設定あり（.claude/settings.json）');
+  assert.equal(deniedEnv.suggestions.claudeCode, null);
   assert.equal(output.results.find((item) => item.path === '.env.public').agents.claudeCode, '拒否設定なし → 読める可能性あり');
-  assert.equal(output.results.find((item) => item.path === 'secrets/token.key').agents.claudeCode, '拒否設定あり');
-  assert.doesNotMatch(result.stdout, /SECRET_VALUE_SHOULD_NOT_APPEAR|PUBLIC_ENV_VALUE|KEY_VALUE/);
+  assert.equal(output.results.find((item) => item.path === 'secrets/token.key').agents.claudeCode, '拒否設定あり（.claude/settings.json）');
+  assert.equal(output.results.find((item) => item.path === '.env.public').suggestions.claudeCode, '"Read(./.env.public)" を permissions.deny に追加');
+  assert.doesNotMatch(result.stdout, /Read\(\.\/\.env\)|SECRET_VALUE_SHOULD_NOT_APPEAR|PUBLIC_ENV_VALUE|KEY_VALUE/);
+
+  const textResult = run(['scan', root], os.tmpdir());
+  assert.equal(textResult.status, 1);
+  assert.doesNotMatch(textResult.stdout, /修正例: Claude Code: "Read\(\.\/\.env\)"/);
+});
+
+test('user Claude deny rules are merged and their source is reported', (t) => {
+  const root = makeFixture(t);
+  const home = makeFixture(t);
+  write(root, '.env', 'SECRET_VALUE_SHOULD_NOT_APPEAR');
+  write(home, '.claude/settings.json', JSON.stringify({
+    permissions: { deny: ['Read(./.env)'] },
+  }));
+
+  const result = run(['scan', root, '--json'], os.tmpdir(), { HOME: home });
+  assert.equal(result.status, 1);
+  const output = JSON.parse(result.stdout);
+  const item = output.results.find((entry) => entry.path === '.env');
+  assert.equal(item.agents.claudeCode, '拒否設定あり（~/.claude/settings.json）');
+  assert.equal(item.suggestions.claudeCode, null);
+  assert.doesNotMatch(result.stdout, /Read\(\.\/\.env\)|SECRET_VALUE_SHOULD_NOT_APPEAR/);
+});
+
+test('CLAUDE_CONFIG_DIR selects the user settings file', (t) => {
+  const root = makeFixture(t);
+  const home = makeFixture(t);
+  const configDir = makeFixture(t);
+  write(root, '.env', 'SECRET_VALUE_SHOULD_NOT_APPEAR');
+  write(home, '.claude/settings.json', JSON.stringify({
+    permissions: { deny: ['Read(./.env.local)'] },
+  }));
+  write(configDir, 'settings.json', JSON.stringify({
+    permissions: { deny: ['Read(./.env)'] },
+  }));
+
+  const result = run(['scan', root, '--json'], os.tmpdir(), { HOME: home, CLAUDE_CONFIG_DIR: configDir });
+  assert.equal(result.status, 1);
+  const output = JSON.parse(result.stdout);
+  const item = output.results.find((entry) => entry.path === '.env');
+  assert.equal(item.agents.claudeCode, '拒否設定あり（CLAUDE_CONFIG_DIR/settings.json）');
+  assert.equal(item.suggestions.claudeCode, null);
+});
+
+test('missing or invalid user settings warn without changing exit codes', (t) => {
+  const emptyRoot = makeFixture(t);
+  const missingHome = makeFixture(t);
+  const missing = run(['scan', emptyRoot, '--json'], os.tmpdir(), { HOME: missingHome });
+  assert.equal(missing.status, 0);
+  assert.match(JSON.parse(missing.stdout).warnings.join(' '), /~\/\.claude\/settings\.json が見つかりません/);
+
+  const root = makeFixture(t);
+  const invalidHome = makeFixture(t);
+  write(root, '.env', 'SECRET_VALUE_SHOULD_NOT_APPEAR');
+  write(invalidHome, '.claude/settings.json', '{ invalid json');
+  const invalid = run(['scan', root, '--json'], os.tmpdir(), { HOME: invalidHome });
+  assert.equal(invalid.status, 1);
+  assert.match(JSON.parse(invalid.stdout).warnings.join(' '), /~\/\.claude\/settings\.json はJSONとして読めず/);
+
+  const nonFileHome = makeFixture(t);
+  fs.mkdirSync(path.join(nonFileHome, '.claude', 'settings.json'), { recursive: true });
+  const unreadable = run(['scan', emptyRoot, '--json'], os.tmpdir(), { HOME: nonFileHome });
+  assert.equal(unreadable.status, 0);
+  assert.match(JSON.parse(unreadable.stdout).warnings.join(' '), /~\/\.claude\/settings\.json を確認できません/);
 });
 
 test('project-local Claude deny rules and .claudeignore warning are reported', (t) => {
@@ -112,7 +185,7 @@ test('project-local Claude deny rules and .claudeignore warning are reported', (
   const result = run(['scan', root, '--json'], os.tmpdir());
   const output = JSON.parse(result.stdout);
   const item = output.results.find((entry) => entry.path === '.env.local');
-  assert.equal(item.agents.claudeCode, '拒否設定あり');
+  assert.equal(item.agents.claudeCode, '拒否設定あり（.claude/settings.local.json）');
   assert.match(item.warnings.join(' '), /\.claudeignore/);
   assert.doesNotMatch(result.stdout, /LOCAL_SECRET/);
 });
