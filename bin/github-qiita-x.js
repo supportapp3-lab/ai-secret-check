@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { version } = require('../package.json');
 
-const USAGE = 'Usage: github-qiita-x scan [ディレクトリ] [--json] | github-qiita-x --version';
+const USAGE = 'Usage: github-qiita-x scan [ディレクトリ] [--json] | github-qiita-x scan-logs | github-qiita-x --version';
 const SAMPLE_ENV_NAMES = new Set(['.env.example', '.env.sample', '.env.template']);
 const KEY_NAMES = new Set(['id_rsa', 'id_ed25519', 'id_ecdsa']);
 
@@ -282,7 +282,119 @@ function runScan(directory, jsonOutput) {
   return files.some((file) => !file.sample) ? 1 : 0;
 }
 
+function scanLogs() {
+  const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(process.env.HOME || os.homedir(), '.claude');
+  const projectsDir = path.join(configDir, 'projects');
+  const findings = [];
+  const errors = [];
+  let filesScanned = 0;
+  let rootStat;
+
+  try {
+    rootStat = fs.lstatSync(projectsDir);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      console.log('Claude Code のログ保存先 ~/.claude/projects/ がありません（JSONL 0件）。');
+      console.log('Codex の会話ログは保存場所を確認していないため対象外です。');
+      console.log('既知の鍵形式だけを確認します。見つからない場合も安全を保証するものではありません。');
+      return 0;
+    }
+    console.error('Claude Code のログ保存先を確認できません。');
+    return 2;
+  }
+
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    console.error('Claude Code のログ保存先を安全に確認できません。');
+    return 2;
+  }
+
+  const patterns = [
+    { type: 'Anthropic APIキー形式', regex: /sk-ant-[A-Za-z0-9_-]{10,}/g },
+    { type: 'APIキー形式 (sk-)', regex: /sk-(?!ant-)[A-Za-z0-9_-]{20,}/g },
+    { type: 'GitHubトークン形式 (ghp_)', regex: /ghp_[A-Za-z0-9]{20,}/g },
+    { type: 'GitHubトークン形式 (github_pat_)', regex: /github_pat_[A-Za-z0-9_]{20,}/g },
+    { type: 'AWSアクセスキーID形式', regex: /AKIA[A-Z0-9]{16}/g },
+    { type: 'Slackトークン形式', regex: /xox[baprs]-[A-Za-z0-9-]{10,}/g },
+    {
+      type: 'KEY=値形式',
+      regex: /\b([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|ACCESS_KEY|PRIVATE_KEY)[A-Z0-9_]*)[ \t]*=[ \t]*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^,\s}"']+)/g,
+    },
+  ];
+
+  const visit = (directory, relativeDirectory = '') => {
+    let entries;
+    try {
+      entries = fs.readdirSync(directory, { withFileTypes: true });
+    } catch {
+      errors.push(relativeDirectory || '.');
+      return;
+    }
+
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
+      const relativePath = relativeDirectory ? path.join(relativeDirectory, entry.name) : entry.name;
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        let stat;
+        try {
+          stat = fs.lstatSync(fullPath);
+        } catch {
+          errors.push(relativePath);
+          continue;
+        }
+        if (stat.isSymbolicLink() || !stat.isDirectory()) continue;
+        visit(fullPath, relativePath);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
+
+      let contents;
+      try {
+        const stat = fs.lstatSync(fullPath);
+        if (stat.isSymbolicLink() || !stat.isFile()) continue;
+        contents = fs.readFileSync(fullPath, 'utf8');
+      } catch {
+        errors.push(relativePath);
+        continue;
+      }
+      filesScanned += 1;
+
+      const counts = new Map();
+      for (const { type, regex } of patterns) {
+        regex.lastIndex = 0;
+        let match;
+        while ((match = regex.exec(contents)) !== null) {
+          counts.set(type, (counts.get(type) || 0) + 1);
+        }
+      }
+      for (const [type, count] of counts) findings.push({ path: relativePath, type, count });
+    }
+  };
+
+  visit(projectsDir);
+  for (const finding of findings) {
+    console.log(`${finding.path}: ${finding.type} ${finding.count}件`);
+  }
+  if (findings.length === 0) {
+    console.log(`既知形式の一致はありません（JSONL ${filesScanned}件を確認）。`);
+  }
+  console.log('Codex の会話ログは保存場所を確認していないため対象外です。');
+  console.log('Claude Code の ~/.claude/projects/ 配下の JSONL を対象にしました。既知形式以外は検出せず、安全を保証するものではありません。');
+  if (errors.length > 0) {
+    for (const relativePath of errors) console.error(`${relativePath} を読み取れません。`);
+    return 2;
+  }
+  return findings.length > 0 ? 1 : 0;
+}
+
 function main(args) {
+  if (args[0] === 'scan-logs') {
+    if (args.length !== 1) {
+      console.error(USAGE);
+      return 2;
+    }
+    return scanLogs();
+  }
   if (args.length === 1 && args[0] === '--version') {
     console.log(version);
     return 0;

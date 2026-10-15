@@ -36,6 +36,41 @@ function run(args, cwd, envOverrides = {}) {
   });
 }
 
+
+test('scan-logs reports secret kinds and counts without exposing dummy values', (t) => {
+  const configDir = makeFixture(t);
+  const dummySecrets = [
+    'sk-ant-0123456789abcdefghijkl',
+    'sk-proj-0123456789abcdefghijkl',
+    'ghp_0123456789abcdefghijklmnopqrst',
+    'AKIA1234567890ABCDEF',
+    'API_KEY=do-not-print-this-api-value',
+  ];
+  write(configDir, 'projects/sample/session.jsonl', JSON.stringify({ message: dummySecrets.join(' ') }) + '\n');
+
+  const result = run(['scan-logs'], os.tmpdir(), { CLAUDE_CONFIG_DIR: configDir });
+  assert.ifError(result.error);
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr, '');
+  assert.match(result.stdout, /Anthropic APIキー形式 1件/);
+  assert.match(result.stdout, /APIキー形式 \(sk-\) 1件/);
+  assert.match(result.stdout, /GitHubトークン形式 \(ghp_\) 1件/);
+  assert.match(result.stdout, /AWSアクセスキーID形式 1件/);
+  assert.match(result.stdout, /KEY=値形式 1件/);
+  for (const secret of dummySecrets) assert.ok(!result.stdout.includes(secret));
+  assert.match(result.stdout, /Codex の会話ログは保存場所を確認していないため対象外/);
+});
+
+test('scan-logs treats a missing configuration directory as a clean, non-crashing scan', (t) => {
+  const configDir = path.join(makeFixture(t), 'missing');
+  const result = run(['scan-logs'], os.tmpdir(), { CLAUDE_CONFIG_DIR: configDir });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /JSONL 0件/);
+  assert.match(result.stdout, /Codex の会話ログは保存場所を確認していないため対象外/);
+  assert.doesNotMatch(result.stdout, /undefined|null/);
+});
+
 test('--version prints the package version and exits successfully', () => {
   const result = run(['--version'], os.tmpdir());
 
