@@ -152,12 +152,17 @@ test('CLAUDE_CONFIG_DIR selects the user settings file', (t) => {
   assert.equal(item.suggestions.claudeCode, null);
 });
 
-test('missing or invalid user settings warn without changing exit codes', (t) => {
+test('missing user settings are silent while invalid settings still warn without changing exit codes', (t) => {
   const emptyRoot = makeFixture(t);
   const missingHome = makeFixture(t);
   const missing = run(['scan', emptyRoot, '--json'], os.tmpdir(), { HOME: missingHome });
   assert.equal(missing.status, 0);
-  assert.match(JSON.parse(missing.stdout).warnings.join(' '), /~\/\.claude\/settings\.json が見つかりません/);
+  assert.deepEqual(JSON.parse(missing.stdout).warnings, []);
+
+  const configDir = makeFixture(t);
+  const missingConfig = run(['scan', emptyRoot, '--json'], os.tmpdir(), { HOME: missingHome, CLAUDE_CONFIG_DIR: configDir });
+  assert.equal(missingConfig.status, 0);
+  assert.deepEqual(JSON.parse(missingConfig.stdout).warnings, []);
 
   const root = makeFixture(t);
   const invalidHome = makeFixture(t);
