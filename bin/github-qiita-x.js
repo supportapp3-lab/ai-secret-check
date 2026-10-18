@@ -5,8 +5,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { version } = require('../package.json');
+const { runScanHistory } = require('./scan-history');
 
-const USAGE = 'Usage: github-qiita-x scan [ディレクトリ] [--json] | github-qiita-x scan-logs | github-qiita-x --version';
+const USAGE = 'Usage: github-qiita-x scan [ディレクトリ] [--json] | github-qiita-x scan-history [ディレクトリ] [--json] | github-qiita-x scan-logs | github-qiita-x --version';
 const SAMPLE_ENV_NAMES = new Set(['.env.example', '.env.sample', '.env.template']);
 const KEY_NAMES = new Set(['id_rsa', 'id_ed25519', 'id_ecdsa']);
 
@@ -403,7 +404,7 @@ function main(args) {
     console.log(USAGE);
     return 0;
   }
-  if (args[0] !== 'scan') {
+  if (!['scan', 'scan-history'].includes(args[0])) {
     console.error(USAGE);
     return 2;
   }
@@ -416,11 +417,12 @@ function main(args) {
   }
   const jsonOutput = jsonIndexes.length === 1;
   const positional = rest.filter((value) => value !== '--json');
-  if (positional.length > 1) {
+  if (positional.length > 1 || (args[0] === 'scan-history' && positional.some((value) => value.startsWith('-')))) {
     console.error(USAGE);
     return 2;
   }
-  return runScan(positional[0] || process.cwd(), jsonOutput);
+  const run = args[0] === 'scan-history' ? runScanHistory : runScan;
+  return run(positional[0] || process.cwd(), jsonOutput);
 }
 
 if (require.main === module) {
