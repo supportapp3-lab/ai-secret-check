@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { version } = require('../package.json');
+const { loadCodexSettings, assessCodex } = require('./codex-permissions');
 
 const USAGE = 'Usage: github-qiita-x scan [ディレクトリ] [--json] | github-qiita-x scan-logs | github-qiita-x --version';
 const SAMPLE_ENV_NAMES = new Set(['.env.example', '.env.sample', '.env.template']);
@@ -205,14 +206,14 @@ function assessFiles(root, files, warnings) {
   const cursorIgnoreText = readTextIfPresent(root, '.cursorignore', warnings);
   const cursorPatterns = cursorIgnoreText === null ? [] : cursorIgnoreText.split(/\r?\n/);
   const claudeIgnoreStat = safeStat(root, '.claudeignore');
-  const codexConfigStat = safeStat(root, '.codex/config.toml');
   const claudeIgnoreExists = Boolean(claudeIgnoreStat && claudeIgnoreStat.isFile());
-  const codexConfigExists = Boolean(codexConfigStat && codexConfigStat.isFile());
+  const codexSettings = loadCodexSettings(root, warnings);
 
   return files.map((file) => {
     const claudeDeny = claudeDenyPatterns.find(({ pattern }) => globMatches(file.path, pattern));
     const claudeDenied = Boolean(claudeDeny);
     const cursorIgnored = matchesIgnoreFile(file.path, cursorPatterns);
+    const codex = assessCodex(file.path, codexSettings, globMatches);
     return {
       ...file,
       agents: {
@@ -222,15 +223,15 @@ function assessFiles(root, files, warnings) {
         cursor: cursorIgnored
           ? '除外設定あり（ただし完全ではない可能性）'
           : '除外設定なし → 読める可能性あり',
-        codex: codexConfigExists
-          ? '設定で防ぐ方法が未確認のため、読める可能性あり（.codex/config.toml を検出）'
-          : '設定で防ぐ方法が未確認のため、読める可能性あり',
+        codex: codex.message,
       },
       suggestions: {
         claudeCode: claudeDenied ? null : `"Read(./${file.path})" を permissions.deny に追加`,
         cursor: `./${file.path} を .cursorignore に追加`,
+        codex: codex.suggestion,
       },
       warnings: [
+        ...codex.warnings,
         ...(claudeIgnoreExists ? ['.claudeignore は公式のアクセス制御設定として確認できません。permissions.deny を確認してください。'] : []),
       ],
     };
@@ -238,8 +239,7 @@ function assessFiles(root, files, warnings) {
 }
 
 function renderText(results, warnings) {
-  if (results.length === 0) return '読めそうなファイルは見つかりませんでした。';
-  const lines = [];
+  const lines = results.length === 0 ? ['読めそうなファイルは見つかりませんでした。'] : [];
   for (const item of results) {
     lines.push(`${item.path}${item.sample ? '  [サンプル・INFO]' : ''}`);
     lines.push(`  Claude Code: ${item.agents.claudeCode}`);
@@ -251,6 +251,7 @@ function renderText(results, warnings) {
     if (item.agents.cursor === '除外設定なし → 読める可能性あり') {
       lines.push(`  修正例: Cursor: ${item.suggestions.cursor}`);
     }
+    if (item.suggestions.codex) lines.push(`  修正例: Codex:\n${item.suggestions.codex}`);
     for (const warning of item.warnings) lines.push(`  警告: ${warning}`);
   }
   for (const warning of warnings) lines.push(`警告: ${warning}`);

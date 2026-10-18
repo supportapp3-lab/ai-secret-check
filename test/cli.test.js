@@ -26,6 +26,7 @@ function run(args, cwd, envOverrides = {}) {
   const env = {
     ...process.env,
     HOME: path.join(os.tmpdir(), 'github-qiita-x-empty-home'),
+    CODEX_HOME: '',
     CLAUDE_CONFIG_DIR: '',
     ...envOverrides,
   };
@@ -273,15 +274,15 @@ test('text output omits Cursor correction for excluded paths but retains it for 
   assert.match(ordinary.stdout, /修正例: Cursor: \.\/\.env を \.cursorignore に追加/);
 });
 
-test('Codex reports project config presence only without reading its contents', (t) => {
+test('Codex reads project configuration without exposing unrelated values', (t) => {
   const root = makeFixture(t);
   write(root, '.env', 'CODEX_SECRET');
   write(root, '.codex/config.toml', 'token = "CODEX_CONFIG_SECRET"');
 
   const result = run(['scan', root, '--json'], os.tmpdir());
   const output = JSON.parse(result.stdout);
-  assert.match(output.results[0].agents.codex, /\.codex\/config\.toml を検出/);
-  assert.match(output.results[0].agents.codex, /設定で防ぐ方法が未確認/);
+  assert.match(output.results[0].agents.codex, /拒否設定なし/);
+  assert.match(output.warnings.join(' '), /プロジェクト設定は信頼済みプロジェクトでのみ有効/);
   assert.doesNotMatch(result.stdout, /CODEX_SECRET|CODEX_CONFIG_SECRET|token/);
 });
 
