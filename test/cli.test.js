@@ -8,10 +8,10 @@ const path = require('node:path');
 const test = require('node:test');
 const { version } = require('../package.json');
 
-const cliPath = path.join(__dirname, '..', 'bin', 'github-qiita-x.js');
+const cliPath = path.join(__dirname, '..', 'bin', 'ai-secret-check.js');
 
 function makeFixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'github-qiita-x-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-secret-check-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return root;
 }
@@ -22,15 +22,15 @@ function write(root, relativePath, content = '') {
   fs.writeFileSync(target, content);
 }
 
-function run(args, cwd, envOverrides = {}) {
+function run(args, cwd, envOverrides = {}, entry = cliPath) {
   const env = {
     ...process.env,
-    HOME: path.join(os.tmpdir(), 'github-qiita-x-empty-home'),
+    HOME: path.join(os.tmpdir(), 'ai-secret-check-empty-home'),
     CODEX_HOME: '',
     CLAUDE_CONFIG_DIR: '',
     ...envOverrides,
   };
-  return spawnSync(process.execPath, [cliPath, ...args], {
+  return spawnSync(process.execPath, [entry, ...args], {
     encoding: 'utf8',
     cwd,
     env,
@@ -79,6 +79,41 @@ test('--version prints the package version and exits successfully', () => {
   assert.equal(result.status, 0);
   assert.equal(result.stderr, '');
   assert.equal(result.stdout, `${version}\n`);
+});
+
+test('--help describes all commands and supported output options without scanning', () => {
+  const result = run(['--help'], os.tmpdir());
+  assert.ifError(result.error);
+  assert.equal(result.status, 0);
+  assert.equal(result.stderr, '');
+  assert.match(result.stdout, /Usage: ai-secret-check/);
+  for (const command of ['scan', 'scan-history', 'scan-logs']) {
+    assert.match(result.stdout, new RegExp(`^  ${command}[^\\n]+`, 'm'));
+  }
+  for (const option of ['--json', '--version', '--help']) assert.ok(result.stdout.includes(option));
+  const noArgs = run([], os.tmpdir());
+  assert.equal(noArgs.status, 0);
+  assert.equal(noArgs.stdout, result.stdout);
+  assert.equal(noArgs.stderr, '');
+});
+
+test('deprecated command alias adds one stderr line while preserving stdout and exit codes', (t) => {
+  const root = makeFixture(t);
+  write(root, '.env', 'ALIAS_DUMMY_SECRET_DO_NOT_PRINT');
+  const alias = path.join(__dirname, '..', 'bin', 'legacy-command.js');
+  const warning = 'github-qiita-x は非推奨です。ai-secret-check を使ってください\n';
+  const packageInfo = require('../package.json');
+  assert.equal(packageInfo.bin['github-qiita-x'], 'bin/legacy-command.js');
+  assert.equal(packageInfo.bin['ai-secret-check'], 'bin/ai-secret-check.js');
+  for (const args of [['--version'], ['--help'], ['scan', root, '--json'], ['--unknown']]) {
+    const current = run(args, os.tmpdir());
+    const old = run(args, os.tmpdir(), {}, alias);
+    assert.ifError(old.error);
+    assert.equal(old.status, current.status);
+    assert.equal(old.stdout, current.stdout);
+    assert.equal(old.stderr, warning + current.stderr);
+    assert.doesNotMatch(old.stdout + old.stderr, /ALIAS_DUMMY_SECRET_DO_NOT_PRINT/);
+  }
 });
 
 test('scan finds secret-like names without reading file values and skips excluded paths', (t) => {
