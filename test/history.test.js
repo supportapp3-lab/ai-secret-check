@@ -7,7 +7,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 
-const CLI = path.join(__dirname, '../bin/github-qiita-x.js');
+const CLI = path.join(__dirname, '../bin/ai-secret-check.js');
 const SECRET = 'HISTORY_SECRET_SHOULD_NOT_APPEAR';
 
 function fixture(t) {

@@ -8,7 +8,18 @@ const { version } = require('../package.json');
 const { loadCodexSettings, assessCodex } = require('./codex-permissions');
 const { runScanHistory } = require('./scan-history');
 
-const USAGE = 'Usage: github-qiita-x scan [ディレクトリ] [--json] | github-qiita-x scan-history [ディレクトリ] [--json] | github-qiita-x scan-logs | github-qiita-x --version';
+const USAGE = 'Usage: ai-secret-check <scan|scan-history|scan-logs> [ディレクトリ] [--json]';
+const HELP = `${USAGE}
+
+コマンド:
+  scan [ディレクトリ]          秘密情報らしいファイル名とエージェントの拒否設定を点検
+  scan-history [ディレクトリ]  Git履歴に残った .env 系ファイルのパスを点検
+  scan-logs                   Claude Codeの会話ログから既知の鍵形式を件数だけ報告
+
+オプション:
+  --json     scan / scan-history の結果をJSONで表示
+  --version  バージョンを表示
+  --help     このヘルプを表示`;
 const SAMPLE_ENV_NAMES = new Set(['.env.example', '.env.sample', '.env.template']);
 const KEY_NAMES = new Set(['id_rsa', 'id_ed25519', 'id_ecdsa']);
 
@@ -401,8 +412,8 @@ function main(args) {
     console.log(version);
     return 0;
   }
-  if (args.length === 0) {
-    console.log(USAGE);
+  if (args.length === 0 || (args.length === 1 && args[0] === '--help')) {
+    console.log(HELP);
     return 0;
   }
   if (!['scan', 'scan-history'].includes(args[0])) {
@@ -431,4 +442,3 @@ if (require.main === module) {
 }
 
 module.exports = { main, globMatches, matchesIgnoreFile, scanFiles };
-

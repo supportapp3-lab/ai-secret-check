@@ -1,28 +1,52 @@
-# product-slot-01
+# ai-secret-check
 
-GithubQiitaX事業のNode.js製CLIです。リポジトリ内にある環境変数ファイルや秘密鍵らしい名前のファイルを、**ファイル名とパスだけ**で探し、Claude Code・Cursor・Codexのリポジトリ設定と照合します。
+AIコーディングエージェントから `.env` や鍵が読めないかを点検する、Node.js製の読み取り専用CLIです。ファイルを変更せず、秘密の値や対象ファイルの中身を出力せず、外部通信を行いません。
+
+次の5項目を点検します。
+
+- Claude Codeの `permissions.deny`
+- Cursorの `.cursorignore`
+- Codexのpermission profileのdeny
+- Claude Codeの会話ログにある既知の鍵形式（`scan-logs`）
+- Git履歴に残った `.env` 系ファイルのパス（`scan-history`）
+
+`scan` は秘密情報らしい**ファイル名とパスだけ**を探し、拒否設定と照合します。`scan-logs` は指定の会話ログを読みますが、値は出力しません。点検で問題が見つからなくても、実際の読み取り防止や秘密情報が存在しないことを保証するものではありません。
 
 ## 必要環境とセットアップ
 
 - Node.js 20以上（LTS版を推奨）
 - npm（Node.jsに同梱）
 
+GitHubからnpxで実行できます（Node.js 20以上とGitが必要です）。
+
 ~~~sh
-npm ci
+npx github:supportapp3-lab/ai-secret-check scan
 ~~~
 
-追加の依存パッケージはありません。外部通信もしません。
+cloneして実行する場合:
+
+~~~sh
+git clone https://github.com/supportapp3-lab/ai-secret-check.git && cd ai-secret-check && node bin/ai-secret-check.js scan
+~~~
+
+追加の依存パッケージはありません。npxによる取得やcloneは通信しますが、CLI自体の点検は外部通信を行いません。
+上記URLは公開時の名前を示します。リポジトリ改名・公開設定の変更はこの実装には含まれません。`private: true` を維持し、npmには公開していません。
 
 ## 使い方
 
 ~~~sh
-node bin/github-qiita-x.js scan
-node bin/github-qiita-x.js scan ./対象ディレクトリ
-node bin/github-qiita-x.js scan ./対象ディレクトリ --json
-node bin/github-qiita-x.js scan-history ./対象ディレクトリ
-node bin/github-qiita-x.js scan-history ./対象ディレクトリ --json
-node bin/github-qiita-x.js --version
+node bin/ai-secret-check.js scan
+node bin/ai-secret-check.js scan ./対象ディレクトリ
+node bin/ai-secret-check.js scan ./対象ディレクトリ --json
+node bin/ai-secret-check.js scan-logs
+node bin/ai-secret-check.js scan-history ./対象ディレクトリ
+node bin/ai-secret-check.js scan-history ./対象ディレクトリ --json
+node bin/ai-secret-check.js --version
+node bin/ai-secret-check.js --help
 ~~~
+
+コマンドをPATHに導入した環境では、`ai-secret-check scan`、`ai-secret-check scan-history`、`ai-secret-check scan-logs` のように実行します。
+旧コマンド `github-qiita-x` は非推奨の別名として残しています。実行するとstderrへ `github-qiita-x は非推奨です。ai-secret-check を使ってください` の1行を表示し、新しいCLIと同じ本文出力・終了コードを返します。
 
 ディレクトリを省略するとカレントディレクトリを調べます。--version と引数なしの使い方表示も利用できます。終了コードは、読めそうな対象ファイルがない場合 0、ある場合 1、引数や対象ディレクトリが不正な場合 2 です。サンプル環境変数ファイルだけの場合は INFO として表示し、終了コードは 0 です。
 
@@ -90,7 +114,7 @@ globは `*`・`**`・`?` に対応し、文字クラスなど未対応のルー�
 ### 会話ログの鍵点検（試験版）
 
 ```sh
-node bin/github-qiita-x.js scan-logs
+node bin/ai-secret-check.js scan-logs
 ```
 
 Claude Code の `~/.claude/projects/` 配下にある `.jsonl` を読み取り、`sk-ant-`、`sk-`、`ghp_`、`github_pat_`、`AKIA`、`xoxb-` などの既知プレフィックスと、鍵・トークン・秘密情報を表す名前の `KEY=値` 形式を数えます。出力するのはログの相対パス、形式名、件数だけで、検出した値は表示しません。
@@ -102,8 +126,8 @@ Claude Code の `~/.claude/projects/` 配下にある `.jsonl` を読み取り�
 ### Git履歴の環境変数ファイル点検
 
 ```sh
-node bin/github-qiita-x.js scan-history
-node bin/github-qiita-x.js scan-history ./対象ディレクトリ --json
+node bin/ai-secret-check.js scan-history
+node bin/ai-secret-check.js scan-history ./対象ディレクトリ --json
 ```
 
 Gitが必要です。省略時はカレントディレクトリが属するリポジトリの履歴を調べます。
@@ -147,4 +171,28 @@ npm test
 ~~~
 
 Node.js標準の node:test を使い、対象の検出、サンプル・公開鍵・除外ディレクトリ・シンボリックリンクの除外、各設定との照合、終了コード、JSON出力、ダミー秘密値が出力に含まれないことを確認します。
+
+## 関連記事（Qiita）
+
+- [.env点検CLI](https://qiita.com/supportapp3/items/76254d663f4da32d41da)
+- [Codex CLIに.envを読ませない設定](https://qiita.com/supportapp3/items/949794973a65fa5aac11)
+- [過去にコミットした.envはGitの履歴から読める](https://qiita.com/supportapp3/items/5833f7d38254ad4f6cf6)
+
+## ライセンス
+
+[MIT License](LICENSE)。Copyright (c) 2026 supportapp3-lab。
+
+## English summary
+
+ai-secret-check is a read-only Node.js CLI for checking whether coding agents may
+access `.env` files or private-key-like paths. It inspects Claude Code deny rules,
+Cursor ignore rules, Codex permission profiles, Claude Code conversation logs,
+and `.env` paths recorded in Git history. It does not print secret values, modify
+files, or make network requests. Results are advisory and do not guarantee that
+secrets are protected.
+
+Requires Node.js 20 or later. Run `npx github:supportapp3-lab/ai-secret-check scan`,
+or clone [the repository](https://github.com/supportapp3-lab/ai-secret-check) and
+run `node bin/ai-secret-check.js --help`. `scan` and `scan-history` support `--json`.
+Licensed under MIT. This package remains private and is not published to npm.
 

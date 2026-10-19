@@ -7,9 +7,9 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 const { assessCodex } = require('../bin/codex-permissions');
-const { globMatches } = require('../bin/github-qiita-x');
+const { globMatches } = require('../bin/ai-secret-check');
 
-const CLI = path.join(__dirname, '../bin/github-qiita-x.js');
+const CLI = path.join(__dirname, '../bin/ai-secret-check.js');
 const SECRET = 'CODEX_CONFIG_SECRET';
 const FILES = ['.env', 'app/.env', '.env.local', 'a/b/c/d/.env', '.env.example'];
 

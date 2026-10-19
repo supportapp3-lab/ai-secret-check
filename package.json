@@ -1,11 +1,29 @@
 {
-  "name": "github-qiita-x",
+  "name": "ai-secret-check",
   "version": "0.1.0",
-  "description": "GithubQiitaX CLIの骨組み",
+  "description": "AIコーディングエージェントから .env や鍵が読めないかを点検する読み取り専用CLI",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/supportapp3-lab/ai-secret-check.git"
+  },
+  "homepage": "https://github.com/supportapp3-lab/ai-secret-check#readme",
+  "bugs": {
+    "url": "https://github.com/supportapp3-lab/ai-secret-check/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "cursor",
+    "codex",
+    "dotenv",
+    "secrets",
+    "security"
+  ],
   "type": "commonjs",
   "bin": {
-    "github-qiita-x": "bin/github-qiita-x.js"
+    "ai-secret-check": "bin/ai-secret-check.js",
+    "github-qiita-x": "bin/legacy-command.js"
   },
   "files": [
     "bin/"
