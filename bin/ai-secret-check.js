@@ -7,14 +7,16 @@ const path = require('node:path');
 const { version } = require('../package.json');
 const { loadCodexSettings, assessCodex } = require('./codex-permissions');
 const { runScanHistory } = require('./scan-history');
+const { runScanPackage } = require('./scan-package');
 
-const USAGE = 'Usage: ai-secret-check <scan|scan-history|scan-logs> [ディレクトリ] [--json]';
+const USAGE = 'Usage: ai-secret-check <scan|scan-history|scan-logs|scan-package> [ディレクトリ] [--json]';
 const HELP = `${USAGE}
 
 コマンド:
   scan [ディレクトリ]          秘密情報らしいファイル名とエージェントの拒否設定を点検
   scan-history [ディレクトリ]  Git履歴に残った .env 系ファイルのパスを点検
   scan-logs                   Claude Codeの会話ログから既知の鍵形式を件数だけ報告
+  scan-package [ディレクトリ]  npmパッケージに入る秘密情報らしいパスを点検（JSON出力非対応）
 
 オプション:
   --json     scan / scan-history の結果をJSONで表示
@@ -401,6 +403,13 @@ function scanLogs() {
 }
 
 function main(args) {
+  if (args[0] === 'scan-package') {
+    if (args.length > 2 || (args[1] && args[1].startsWith('-'))) {
+      console.error(USAGE);
+      return 2;
+    }
+    return runScanPackage(args[1] || process.cwd());
+  }
   if (args[0] === 'scan-logs') {
     if (args.length !== 1) {
       console.error(USAGE);
