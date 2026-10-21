@@ -4,13 +4,14 @@ AIコーディングエージェントから `.env` や鍵が読めないかを�
 
 役に立ったら Star を押してもらえると、続けて改善する励みになります。見落としや誤検出は Issue で教えてください。
 
-次の5項目を点検します。
+次の6項目を点検します。
 
 - Claude Codeの `permissions.deny`
 - Cursorの `.cursorignore`
 - Codexのpermission profileのdeny
 - Claude Codeの会話ログにある既知の鍵形式（`scan-logs`）
 - Git履歴に残った `.env` 系ファイルのパス（`scan-history`）
+- npmパッケージの配布対象に入る秘密ファイルらしいパス（`scan-package`）
 
 `scan` は秘密情報らしい**ファイル名とパスだけ**を探し、拒否設定と照合します。`scan-logs` は指定の会話ログを読みますが、値は出力しません。点検で問題が見つからなくても、実際の読み取り防止や秘密情報が存在しないことを保証するものではありません。
 
@@ -43,6 +44,7 @@ node bin/ai-secret-check.js scan ./対象ディレクトリ --json
 node bin/ai-secret-check.js scan-logs
 node bin/ai-secret-check.js scan-history ./対象ディレクトリ
 node bin/ai-secret-check.js scan-history ./対象ディレクトリ --json
+node bin/ai-secret-check.js scan-package ./対象ディレクトリ
 node bin/ai-secret-check.js --version
 node bin/ai-secret-check.js --help
 ~~~
@@ -158,6 +160,22 @@ Gitリポジトリでない場合は「gitリポジトリではないため履�
 浅いクローンや部分クローンなどで必要な履歴がない場合も、外部通信による補完はしません。Git実行は1回あたり60秒・出力16MiBを上限とし、超えた場合は成功扱いせず2で終了します。
 見つからなくても安全の保証にはなりません。
 
+### npmパッケージの配布ファイル点検
+
+```sh
+npx github:supportapp3-lab/ai-secret-check scan-package ./対象ディレクトリ
+# clone済みの場合（省略するとカレントディレクトリ）
+node bin/ai-secret-check.js scan-package
+```
+
+対象の`package.json`とnpmが必要です。`npm pack . --dry-run --json --ignore-scripts --offline --workspaces=false --global=false`で、現在の対象パッケージの配布ファイル一覧を取得します。tarballの作成・publish・インストール・外部通信は行いません。prepack・prepare・postpackも実行しないため、生成前のファイルは含めず、必要なビルドは別途行ってから点検してください。初回のnpx取得自体には通信が必要です。
+
+一覧の各階層の`.env`・`.env.*`、`*.pem`、`*.key`、`id_rsa*`をファイル名だけで判定し、`.env.example`・`.env.sample`・`.env.template`は除外します。検出パスは引用して表示し、ファイルの値、npmの生の出力・エラー、パッケージのハッシュは表示しません。JSON出力には対応していません。
+
+検出あり=1、なし=0、package.jsonやnpmがない・実行/解析できない場合=2です。見つかったら、ルートの`.npmignore`が`.gitignore`の代わりになることや、`files`に含めたディレクトリを原因の目安として案内します。修正例は`.npmignore`へ`.env*`・`*.pem`・`*.key`・`id_rsa*`を追加、または`files`を必要な範囲に絞る方法です。ルートの`.npmignore`だけでは`files`の明示指定を除外できない場合があるため、修正後も再点検してください。公開を阻止するフックは追加しません。
+
+2026-10-21に[npm packの公式仕様](https://docs.npmjs.com/cli/v11/commands/npm-pack/)と[package.jsonのfiles仕様](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/#files)を確認しました。npmのバージョンや設定で配布対象は変わるため、実際に使う環境で点検してください。
+
 ## 安全性
 
 対象ファイルの中身や値は開かず、表示もしません。.claude/settings.json、.claude/settings.local.json、ユーザー設定（~/.claude/settings.json または CLAUDE_CONFIG_DIR/settings.json）、.cursorignore は設定確認に必要な場合だけ読みます。Codexのユーザー設定と対象直下の .codex/config.toml は上記の判定に必要な範囲で解析し、トークンなど無関係な設定値や解析に失敗した行の内容は出力しません。.claudeignore は存在のみを確認します。スキャンは読み取り専用で、ファイルの作成・変更・削除をせず、外部コマンドの実行や外部通信もしません。
@@ -165,6 +183,8 @@ Gitリポジトリでない場合は「gitリポジトリではないため履�
 `scan-history` も読み取り専用で、内容を取得する `git show <rev>:<path>`、`git cat-file -p`、`git grep` は実行しません。
 HEAD・参照・作業ツリー・インデックスを変更せず、Gitの外部diff・textconv・署名表示・fsmonitorは使いません。
 遅延取得も無効にし、fetchなどの外部通信は行いません。
+
+`scan-package`は上記のnpm dry-runを子プロセスとして実行します。点検対象の秘密ファイルの内容をCLIから読み取る処理はありませんが、npm自身はパッケージ一覧の計算のためにファイルを処理します。対象のファイルを変更せず、npmのスクリプト・外部通信・更新通知・ログ保存を無効にします。npm実行は60秒・出力16MiBを上限とし、超過・失敗は2で終了します。
 
 ## テスト
 
@@ -196,6 +216,10 @@ files, or make network requests. Results are advisory and do not guarantee that
 secrets are protected.
 
 If you find this useful, please give it a Star to encourage continued improvements, and report missed detections or false positives in an Issue.
+
+### Check npm package contents
+
+Run `ai-secret-check scan-package [directory]` (or `node bin/ai-secret-check.js scan-package`). This requires npm and a local package.json. It uses an offline `npm pack --dry-run --json` with lifecycle scripts disabled, without creating a tarball, publishing, or installing dependencies. It reports only packaged paths matching `.env`/`.env.*`, `*.pem`, `*.key`, or `id_rsa*`, excluding `.env.example`, `.env.sample`, and `.env.template`. It does not display file contents or npm's raw output. Exit codes: findings=1, none=0, unable to check=2; JSON output is not supported. Hints explain `.npmignore` replacing `.gitignore` and broad `files` entries; narrow `files` or add exclusions and scan again. Build-generated files must already exist because prepare/prepack/postpack do not run. Initial retrieval through npx requires network access; the scan itself runs offline.
 
 Requires Node.js 20 or later. Run `npx github:supportapp3-lab/ai-secret-check scan`,
 or clone [the repository](https://github.com/supportapp3-lab/ai-secret-check) and
