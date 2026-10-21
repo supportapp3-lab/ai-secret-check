@@ -2,6 +2,8 @@
 
 AIコーディングエージェントから `.env` や鍵が読めないかを点検する、Node.js製の読み取り専用CLIです。ファイルを変更せず、秘密の値や対象ファイルの中身を出力せず、外部通信を行いません。
 
+役に立ったら Star を押してもらえると、続けて改善する励みになります。見落としや誤検出は Issue で教えてください。
+
 次の6項目を点検します。
 
 - Claude Codeの `permissions.deny`
@@ -197,6 +199,8 @@ Node.js標準の node:test を使い、対象の検出、サンプル・公開�
 - [.env点検CLI](https://qiita.com/supportapp3/items/76254d663f4da32d41da)
 - [Codex CLIに.envを読ませない設定](https://qiita.com/supportapp3/items/949794973a65fa5aac11)
 - [過去にコミットした.envはGitの履歴から読める](https://qiita.com/supportapp3/items/5833f7d38254ad4f6cf6)
+- [pre-commitで.envや鍵のコミットを止める](https://qiita.com/supportapp3/items/d10c7f510955059f53dc)
+- [.npmignoreがあると.envがnpmパッケージに入る](https://qiita.com/supportapp3/items/fa4f271888e6f6899100)
 
 ## ライセンス
 
@@ -210,6 +214,8 @@ Cursor ignore rules, Codex permission profiles, Claude Code conversation logs,
 and `.env` paths recorded in Git history. It does not print secret values, modify
 files, or make network requests. Results are advisory and do not guarantee that
 secrets are protected.
+
+If you find this useful, please give it a Star to encourage continued improvements, and report missed detections or false positives in an Issue.
 
 ### Check npm package contents
 
