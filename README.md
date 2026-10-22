@@ -4,7 +4,7 @@ AIコーディングエージェントから `.env` や鍵が読めないかを�
 
 役に立ったら Star を押してもらえると、続けて改善する励みになります。見落としや誤検出は Issue で教えてください。
 
-次の6項目を点検します。
+次の7項目を点検します。
 
 - Claude Codeの `permissions.deny`
 - Cursorの `.cursorignore`
@@ -12,6 +12,7 @@ AIコーディングエージェントから `.env` や鍵が読めないかを�
 - Claude Codeの会話ログにある既知の鍵形式（`scan-logs`）
 - Git履歴に残った `.env` 系ファイルのパス（`scan-history`）
 - npmパッケージの配布対象に入る秘密ファイルらしいパス（`scan-package`）
+- bash・zshの履歴に残った秘密情報らしい行の件数（`scan-shell-history`）
 
 `scan` は秘密情報らしい**ファイル名とパスだけ**を探し、拒否設定と照合します。`scan-logs` は指定の会話ログを読みますが、値は出力しません。点検で問題が見つからなくても、実際の読み取り防止や秘密情報が存在しないことを保証するものではありません。
 
@@ -42,6 +43,7 @@ node bin/ai-secret-check.js scan
 node bin/ai-secret-check.js scan ./対象ディレクトリ
 node bin/ai-secret-check.js scan ./対象ディレクトリ --json
 node bin/ai-secret-check.js scan-logs
+node bin/ai-secret-check.js scan-shell-history
 node bin/ai-secret-check.js scan-history ./対象ディレクトリ
 node bin/ai-secret-check.js scan-history ./対象ディレクトリ --json
 node bin/ai-secret-check.js scan-package ./対象ディレクトリ
@@ -127,6 +129,20 @@ Claude Code の `~/.claude/projects/` 配下にある `.jsonl` を読み取り�
 
 この版はローカルの Claude Code ログ保存仕様を前提にした試験版で、ファイルは読み取るだけです。変更・削除・通信はしません。終了コードは一致なし=0、一致あり=1、使い方または読み取りエラー=2 です。テストには一時ディレクトリのダミーログだけを使います。
 
+### シェル履歴の鍵点検
+
+```sh
+node bin/ai-secret-check.js scan-shell-history
+```
+
+`HOME`（未設定ならOSのホーム）の `.bash_history`・`.zsh_history` と、空でない `HISTFILE` が指すファイルを読み取り、秘密情報らしい**行の件数**を点検します。引数やJSON出力には対応していません。`scan-history` はGit履歴用の別コマンドです。
+
+KEY・TOKEN・SECRET・PASSWORD・PASSWDを含む変数名への空でない代入、値のある `Authorization: Bearer`、`scan-logs` と同じ既知の鍵プレフィックスを確認します。zshの拡張履歴形式にも対応します。同じ行が複数の形式に一致しても合計は1件、種類別の内訳はそれぞれ1件と数えます。
+
+表示は `~/.bash_history`・`~/.zsh_history`・`HISTFILE` という表示名と種類名・件数だけです。値・該当行・行番号・HISTFILEの実パス・生のエラーは出しません。`path.resolve` 後に同じファイルを指す指定は1回だけ確認し、存在しないファイルは「なし」として飛ばします。リンク（親ディレクトリのリンクを含む）や通常ファイル以外、読み取り不能は「確認できません」として終了コード2になります。一致あり=1、一致なし（対象0件を含む）=0です。
+
+見つかった場合は鍵の再発行、すべての端末を閉じてからの手動編集、今後の `read -rs` とbashの `HISTCONTROL=ignorespace` または `ignoreboth`、AIエージェントの `Read(~/.bash_history)` などの拒否設定を案内します。編集やコマンド実行は行いません。既知の形式だけの確認で、見つからなくても安全の保証にはなりません。fish・PowerShellなど他のシェル、`.python_history`、`ZDOTDIR` は対象外です。
+
 ### Git履歴の環境変数ファイル点検
 
 ```sh
@@ -194,6 +210,8 @@ node bin/ai-secret-check.js scan-dist --out build
 
 ## 安全性
 
+`scan-shell-history` は指定された履歴を読み取り、表示名・形式名・行数だけを出します。値・該当行・生のエラーを出力せず、ファイルの作成・変更・削除、`history`などの外部コマンド実行、外部通信は行いません。
+
 `scan`は対象ファイルの中身や値を開かず、表示もしません。.claude/settings.json、.claude/settings.local.json、ユーザー設定（~/.claude/settings.json または CLAUDE_CONFIG_DIR/settings.json）、.cursorignore は設定確認に必要な場合だけ読みます。Codexのユーザー設定と対象直下の .codex/config.toml は上記の判定に必要な範囲で解析し、トークンなど無関係な設定値や解析に失敗した行の内容は出力しません。.claudeignore は存在のみを確認します。スキャンは読み取り専用で、ファイルの作成・変更・削除をせず、外部コマンドの実行や外部通信もしません。
 
 `scan-dist`は照合のため対象直下の.env系ファイルとビルド出力の内容を読みますが、値・内容・生のエラーは出力しません。ファイル変更・ビルド・外部コマンド・通信は行いません。
@@ -213,6 +231,8 @@ npm test
 Node.js標準の node:test を使い、対象の検出、サンプル・公開鍵・除外ディレクトリ・シンボリックリンクの除外、各設定との照合、終了コード、JSON出力、ダミー秘密値が出力に含まれないことを確認します。
 
 ## 関連記事（Qiita）
+
+- [シェル履歴に残るAPIキーの点検と対策](https://qiita.com/supportapp3/items/1e02584be1add8b7f1a2)
 
 - [.env点検CLI](https://qiita.com/supportapp3/items/76254d663f4da32d41da)
 - [Codex CLIに.envを読ませない設定](https://qiita.com/supportapp3/items/949794973a65fa5aac11)
@@ -234,6 +254,10 @@ files, or make network requests. Results are advisory and do not guarantee that
 secrets are protected.
 
 If you find this useful, please give it a Star to encourage continued improvements, and report missed detections or false positives in an Issue.
+
+### Check shell history
+
+Run `ai-secret-check scan-shell-history` without arguments. It reads `$HOME/.bash_history`, `$HOME/.zsh_history` and a nonempty `HISTFILE`, deduplicating resolved paths and refusing links and unreadable or non-regular files. It reports only fixed display labels, secret categories and matching-line counts, never values, commands, line numbers, custom paths or raw errors. Nonempty secret-variable assignments, Bearer values and the same known key prefixes as `scan-logs` are checked, including zsh extended-history lines. Exit codes are findings=1, none (including no files)=0, unable to check or invalid arguments=2; JSON is unsupported. It suggests rotation, manual history editing after closing all terminals, safer input and agent deny rules without modifying files, executing commands or accessing the network. An absence of matches does not guarantee safety; fish, PowerShell and other histories are outside its scope.
 
 ### Check npm package contents
 

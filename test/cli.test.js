@@ -87,7 +87,7 @@ test('--help describes all commands and supported output options without scannin
   assert.equal(result.status, 0);
   assert.equal(result.stderr, '');
   assert.match(result.stdout, /Usage: ai-secret-check/);
-  for (const command of ['scan', 'scan-history', 'scan-logs']) {
+  for (const command of ['scan', 'scan-history', 'scan-logs', 'scan-shell-history']) {
     assert.match(result.stdout, new RegExp(`^  ${command}[^\\n]+`, 'm'));
   }
   for (const option of ['--json', '--version', '--help']) assert.ok(result.stdout.includes(option));
