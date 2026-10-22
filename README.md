@@ -255,13 +255,13 @@ secrets are protected.
 
 If you find this useful, please give it a Star to encourage continued improvements, and report missed detections or false positives in an Issue.
 
-### Check shell history
-
-Run `ai-secret-check scan-shell-history` without arguments. It reads `$HOME/.bash_history`, `$HOME/.zsh_history` and a nonempty `HISTFILE`, deduplicating resolved paths and refusing links and unreadable or non-regular files. It reports only fixed display labels, secret categories and matching-line counts, never values, commands, line numbers, custom paths or raw errors. Nonempty secret-variable assignments, Bearer values and the same known key prefixes as `scan-logs` are checked, including zsh extended-history lines. Exit codes are findings=1, none (including no files)=0, unable to check or invalid arguments=2; JSON is unsupported. It suggests rotation, manual history editing after closing all terminals, safer input and agent deny rules without modifying files, executing commands or accessing the network. An absence of matches does not guarantee safety; fish, PowerShell and other histories are outside its scope.
-
 ### Check npm package contents
 
 Run `ai-secret-check scan-package [directory]` (or `node bin/ai-secret-check.js scan-package`). This requires npm and a local package.json. It uses an offline `npm pack --dry-run --json` with lifecycle scripts disabled, without creating a tarball, publishing, or installing dependencies. It reports only packaged paths matching `.env`/`.env.*`, `*.pem`, `*.key`, or `id_rsa*`, excluding `.env.example`, `.env.sample`, and `.env.template`. It does not display file contents or npm's raw output. Exit codes: findings=1, none=0, unable to check=2; JSON output is not supported. Hints explain `.npmignore` replacing `.gitignore` and broad `files` entries; narrow `files` or add exclusions and scan again. Build-generated files must already exist because prepare/prepack/postpack do not run. Initial retrieval through npx requires network access; the scan itself runs offline.
+
+### Check shell history
+
+Run `ai-secret-check scan-shell-history` without arguments. It reads `$HOME/.bash_history`, `$HOME/.zsh_history` and a nonempty `HISTFILE`, deduplicating resolved paths and refusing links and unreadable or non-regular files. It reports only fixed display labels, secret categories and matching-line counts, never values, commands, line numbers, custom paths or raw errors. Nonempty secret-variable assignments, Bearer values and the same known key prefixes as `scan-logs` are checked, including zsh extended-history lines. Exit codes are findings=1, none (including no files)=0, unable to check or invalid arguments=2; JSON is unsupported. It suggests rotation, manual history editing after closing all terminals, safer input and agent deny rules without modifying files, executing commands or accessing the network. An absence of matches does not guarantee safety; fish, PowerShell and other histories are outside its scope.
 
 ### Check built output for .env values
 
