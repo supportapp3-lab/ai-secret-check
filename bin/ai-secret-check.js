@@ -295,6 +295,7 @@ function runScan(directory, jsonOutput) {
     console.log(JSON.stringify({ results, warnings }, null, 2));
   } else {
     console.log(renderText(results, warnings));
+    console.log('\nhttps://github.com/supportapp3-lab/ai-secret-check\n役に立ったら Star をお願いします');
   }
   return files.some((file) => !file.sample) ? 1 : 0;
 }

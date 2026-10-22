@@ -52,6 +52,8 @@ node bin/ai-secret-check.js --help
 コマンドをPATHに導入した環境では、`ai-secret-check scan`、`ai-secret-check scan-history`、`ai-secret-check scan-logs` のように実行します。
 旧コマンド `github-qiita-x` は非推奨の別名として残しています。実行するとstderrへ `github-qiita-x は非推奨です。ai-secret-check を使ってください` の1行を表示し、新しいCLIと同じ本文出力・終了コードを返します。
 
+`scan` のテキスト出力の最後にはリポジトリURLと Star の案内が出ます。機械処理には、案内が出ない既存の `--json` を使用してください。
+
 ディレクトリを省略するとカレントディレクトリを調べます。--version と引数なしの使い方表示も利用できます。終了コードは、読めそうな対象ファイルがない場合 0、ある場合 1、引数や対象ディレクトリが不正な場合 2 です。サンプル環境変数ファイルだけの場合は INFO として表示し、終了コードは 0 です。
 
 ## 検出と照合
@@ -234,6 +236,8 @@ files, or make network requests. Results are advisory and do not guarantee that
 secrets are protected.
 
 If you find this useful, please give it a Star to encourage continued improvements, and report missed detections or false positives in an Issue.
+
+Completed text-mode `scan` output ends with the repository URL and a Star invitation; use the existing `--json` output for machine processing without this notice.
 
 ### Check npm package contents
 
