@@ -176,9 +176,27 @@ node bin/ai-secret-check.js scan-package
 
 2026-10-21に[npm packの公式仕様](https://docs.npmjs.com/cli/v11/commands/npm-pack/)と[package.jsonのfiles仕様](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/#files)を確認しました。npmのバージョンや設定で配布対象は変わるため、実際に使う環境で点検してください。
 
+### ビルド出力に含まれる.env値の点検
+
+```sh
+npx github:supportapp3-lab/ai-secret-check scan-dist ./対象ディレクトリ
+# clone済みの場合。ディレクトリ省略時はカレントディレクトリ
+node bin/ai-secret-check.js scan-dist --out build
+```
+
+`scan-dist [ディレクトリ] [--out dist]` は、対象直下の`.env`・`.env.*`を読み、8文字以上の空でない値が、ビルド済み出力のファイル内にそのまま含まれるかを再帰的に点検します。`.env.example`・`.env.sample`・`.env.template`、空の値、8文字未満の値は除外します。ビルド・外部コマンド・通信は実行せず、ファイルも変更しません。初回のnpx取得には通信が必要です。
+
+報告は`FINDING | "キー名" | "dist/assets/index.js"`の形式で、値・前後の文字列・ファイルの中身は表示しません。`VITE_`で始まるキーの一致は公開前提の`INFO`として扱います。それ以外の一致があれば、`define`に`loadEnv`の結果をまとめて渡していないか確認する目安を1行表示します。キー名やパス自体に対象の値が含まれる場合も、その部分を`[REDACTED]`にします。JSON出力は非対応です。
+
+終了コードは検出あり=1、検出なし・INFOのみ=0、点検不能=2です。出力ディレクトリがない場合や、対象.envがない・除外後に8文字以上の値が1つも残らない場合は2になります。`--out`は対象内のディレクトリを指定します。リンクはたどらず、対象の.envや出力内にリンクがある場合、読み取りや形式の解析に失敗した場合も2で終了します。
+
+`.env`は`KEY=value`、任意の`export`、`#`コメント、単一・二重・バッククォートで囲んだ値と複数行を扱います。二重引用符内の`\n`・`\r`・`\"`・`\\`を復元します。変数展開やシェル評価はせず、同じキーでも各.envファイルに書かれた値を点検します。対象直下以外の.env、プロセス環境だけの値、暗号化・エンコード・エスケープ等で変換された値は点検対象になりません。一致なしは安全の保証ではありません。
+
 ## 安全性
 
-対象ファイルの中身や値は開かず、表示もしません。.claude/settings.json、.claude/settings.local.json、ユーザー設定（~/.claude/settings.json または CLAUDE_CONFIG_DIR/settings.json）、.cursorignore は設定確認に必要な場合だけ読みます。Codexのユーザー設定と対象直下の .codex/config.toml は上記の判定に必要な範囲で解析し、トークンなど無関係な設定値や解析に失敗した行の内容は出力しません。.claudeignore は存在のみを確認します。スキャンは読み取り専用で、ファイルの作成・変更・削除をせず、外部コマンドの実行や外部通信もしません。
+`scan`は対象ファイルの中身や値を開かず、表示もしません。.claude/settings.json、.claude/settings.local.json、ユーザー設定（~/.claude/settings.json または CLAUDE_CONFIG_DIR/settings.json）、.cursorignore は設定確認に必要な場合だけ読みます。Codexのユーザー設定と対象直下の .codex/config.toml は上記の判定に必要な範囲で解析し、トークンなど無関係な設定値や解析に失敗した行の内容は出力しません。.claudeignore は存在のみを確認します。スキャンは読み取り専用で、ファイルの作成・変更・削除をせず、外部コマンドの実行や外部通信もしません。
+
+`scan-dist`は照合のため対象直下の.env系ファイルとビルド出力の内容を読みますが、値・内容・生のエラーは出力しません。ファイル変更・ビルド・外部コマンド・通信は行いません。
 
 `scan-history` も読み取り専用で、内容を取得する `git show <rev>:<path>`、`git cat-file -p`、`git grep` は実行しません。
 HEAD・参照・作業ツリー・インデックスを変更せず、Gitの外部diff・textconv・署名表示・fsmonitorは使いません。
@@ -220,6 +238,12 @@ If you find this useful, please give it a Star to encourage continued improvemen
 ### Check npm package contents
 
 Run `ai-secret-check scan-package [directory]` (or `node bin/ai-secret-check.js scan-package`). This requires npm and a local package.json. It uses an offline `npm pack --dry-run --json` with lifecycle scripts disabled, without creating a tarball, publishing, or installing dependencies. It reports only packaged paths matching `.env`/`.env.*`, `*.pem`, `*.key`, or `id_rsa*`, excluding `.env.example`, `.env.sample`, and `.env.template`. It does not display file contents or npm's raw output. Exit codes: findings=1, none=0, unable to check=2; JSON output is not supported. Hints explain `.npmignore` replacing `.gitignore` and broad `files` entries; narrow `files` or add exclusions and scan again. Build-generated files must already exist because prepare/prepack/postpack do not run. Initial retrieval through npx requires network access; the scan itself runs offline.
+
+### Check built output for .env values
+
+Run `ai-secret-check scan-dist [directory] [--out dist]`, or `node bin/ai-secret-check.js scan-dist --out build`. The directory defaults to the current directory. It reads root-level `.env` and `.env.*`, excluding `.env.example`, `.env.sample`, and `.env.template`, and recursively checks built files for literal UTF-8 values of at least eight characters. Empty and shorter values are ignored. It reports only key names and relative output paths: `VITE_` matches are INFO, while other matches are findings with a hint to check whether `define` exposes the entire `loadEnv` result. Values, surrounding content and raw errors are never printed; matching values inside names are redacted too. Exit codes: findings=1, none or INFO only=0, unable to check=2. Missing output or no usable env values exits 2; JSON output is unsupported.
+
+`--out` must select a directory within the target. Links and unreadable files prevent a complete scan and exit 2. The parser supports assignments, optional `export`, comments, quoted/multiline values and double-quoted `\n`, `\r`, `\"`, `\\` escapes, without expansion or shell evaluation. Values from each env file are checked independently. It does not inspect nested env files, process-only environment values, or transformed/encoded values. The scan is offline and read-only, and never runs builds or external commands. Initial npx retrieval requires network access. No match does not guarantee safety.
 
 Requires Node.js 20 or later. Run `npx github:supportapp3-lab/ai-secret-check scan`,
 or clone [the repository](https://github.com/supportapp3-lab/ai-secret-check) and
