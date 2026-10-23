@@ -4,7 +4,7 @@ AIコーディングエージェントから `.env` や鍵が読めないかを�
 
 役に立ったら Star を押してもらえると、続けて改善する励みになります。見落としや誤検出は Issue で教えてください。
 
-次の7項目を点検します。
+次の8項目を点検します。
 
 - Claude Codeの `permissions.deny`
 - Cursorの `.cursorignore`
@@ -13,6 +13,7 @@ AIコーディングエージェントから `.env` や鍵が読めないかを�
 - Git履歴に残った `.env` 系ファイルのパス（`scan-history`）
 - npmパッケージの配布対象に入る秘密ファイルらしいパス（`scan-package`）
 - bash・zshの履歴に残った秘密情報らしい行の件数（`scan-shell-history`）
+- Python起動用ファイルの import 行・ファイル件数（`scan-python-startup`）
 
 `scan` は秘密情報らしい**ファイル名とパスだけ**を探し、拒否設定と照合します。`scan-logs` は指定の会話ログを読みますが、値は出力しません。点検で問題が見つからなくても、実際の読み取り防止や秘密情報が存在しないことを保証するものではありません。
 
@@ -44,6 +45,7 @@ node bin/ai-secret-check.js scan ./対象ディレクトリ
 node bin/ai-secret-check.js scan ./対象ディレクトリ --json
 node bin/ai-secret-check.js scan-logs
 node bin/ai-secret-check.js scan-shell-history
+node bin/ai-secret-check.js scan-python-startup
 node bin/ai-secret-check.js scan-history ./対象ディレクトリ
 node bin/ai-secret-check.js scan-history ./対象ディレクトリ --json
 node bin/ai-secret-check.js scan-package ./対象ディレクトリ
@@ -145,6 +147,31 @@ KEY・TOKEN・SECRET・PASSWORD・PASSWDを含む変数名への空でない代�
 
 見つかった場合は鍵の再発行、すべての端末を閉じてからの手動編集、今後の `read -rs` とbashの `HISTCONTROL=ignorespace` または `ignoreboth`、AIエージェントの `Read(~/.bash_history)` などの拒否設定を案内します。編集やコマンド実行は行いません。既知の形式だけの確認で、見つからなくても安全の保証にはなりません。fish・PowerShellなど他のシェル、`.python_history`、`ZDOTDIR` は対象外です。
 
+### Python起動時に実行されるファイルの点検
+
+```sh
+node bin/ai-secret-check.js scan-python-startup
+```
+
+Pythonやpipを起動せず、Node.jsでファイルだけを点検します。引数や `--json` は受け付けません。HOMEは `process.env.HOME || os.homedir()` で決め、次の場所の `lib/python3*/site-packages` だけを探します。
+
+| 環境の場所 | 出力の表示名 |
+| --- | --- |
+| 空でない `VIRTUAL_ENV` | `$VIRTUAL_ENV` |
+| カレントディレクトリの `.venv` | `./.venv` |
+| カレントディレクトリの `venv` | `./venv` |
+| `$HOME/.local` | `~/.local` |
+
+各site-packagesの直下の `.pth` にある、行頭が `import `（空白）または `import\t`（タブ）の行数を数えます。パスだけの行や、先頭に空白のあるimport行は数えません。`.start`（Python 3.15で追加）・`sitecustomize.py`・`usercustomize.py` は、それぞれファイルを1件と数えます。内容の評価やインポートは行いません。これは[Python公式site仕様](https://docs.python.org/3.15/library/site.html)にある起動用ファイルの点検であり、実際のPython起動を再現するものではありません。同名の `.start` があっても `.pth` のimport行は報告します。
+
+出力は `./.venv: demo.pth（import 行 1件）` のように、固定の表示名・ファイル名・種類・件数だけです。行の中身・フルパス・生のエラーは出しません。ファイル名の制御文字などはエスケープします。`path.resolve` 後に同じ場所は1回だけ数え、上の表の順で最初の表示名を使います。シンボリックリンク（親ディレクトリを含む）はたどらず、通常ファイルだけを対象にします。
+
+該当なしの場合は `起動時に実行されるものはありません（確認した場所 N か所）` と表示します。終了コードは該当あり=1、該当なし（対象ディレクトリ0か所を含む）=0、引数不正・読み取り不能=2です。読み取り不能があれば該当ありより優先して2になります。
+
+見つかったら `*.dist-info/RECORD` で所属パッケージを確かめ、中身を自分の目で見てください。setuptoolsの `distutils-precedence.pth` など正規のものもあります。心当たりがなければ `pip uninstall` し、その環境で使えたキーを再発行する目安を表示します。ツール自身はこれらのコマンドを実行しません。正規のパッケージでも該当し、怪しいかどうかは判定しません。見つからなくても安全の保証にはなりません。
+
+Windowsの `Lib\site-packages`、macOS framework、conda、システムのsite-packages、上記以外の環境やネストしたファイルは対象外です。RECORDからのパッケージ名の自動表示、内容の危険度判定、自動削除、JSON出力には対応していません。
+
 ### Git履歴の環境変数ファイル点検
 
 ```sh
@@ -212,6 +239,8 @@ node bin/ai-secret-check.js scan-dist --out build
 
 ## 安全性
 
+`scan-python-startup` は指定範囲の起動用ファイルをNode.jsで読み取るだけです。Python・pipやその他の外部コマンドを起動せず、ファイルの作成・変更・削除、外部通信は行いません。シンボリックリンクをたどらず、行の中身・フルパス・生のエラーを表示せず、表示名・ファイル名・種類・件数だけを報告します。
+
 `scan-shell-history` は指定された履歴を読み取り、表示名・形式名・行数だけを出します。値・該当行・生のエラーを出力せず、ファイルの作成・変更・削除、`history`などの外部コマンド実行、外部通信は行いません。
 
 `scan`は対象ファイルの中身や値を開かず、表示もしません。.claude/settings.json、.claude/settings.local.json、ユーザー設定（~/.claude/settings.json または CLAUDE_CONFIG_DIR/settings.json）、.cursorignore は設定確認に必要な場合だけ読みます。Codexのユーザー設定と対象直下の .codex/config.toml は上記の判定に必要な範囲で解析し、トークンなど無関係な設定値や解析に失敗した行の内容は出力しません。.claudeignore は存在のみを確認します。スキャンは読み取り専用で、ファイルの作成・変更・削除をせず、外部コマンドの実行や外部通信もしません。
@@ -233,6 +262,8 @@ npm test
 Node.js標準の node:test を使い、対象の検出、サンプル・公開鍵・除外ディレクトリ・シンボリックリンクの除外、各設定との照合、終了コード、JSON出力、ダミー秘密値が出力に含まれないことを確認します。
 
 ## 関連記事（Qiita）
+
+- [pip install しただけで、import しなくても起動のたびに動く .pth](https://qiita.com/supportapp3/items/8a96b81b5e8fed62cb53)
 
 - [シェル履歴に残るAPIキーの点検と対策](https://qiita.com/supportapp3/items/1e02584be1add8b7f1a2)
 
@@ -262,6 +293,10 @@ Completed text-mode `scan` output ends with the repository URL and a Star invita
 ### Check npm package contents
 
 Run `ai-secret-check scan-package [directory]` (or `node bin/ai-secret-check.js scan-package`). This requires npm and a local package.json. It uses an offline `npm pack --dry-run --json` with lifecycle scripts disabled, without creating a tarball, publishing, or installing dependencies. It reports only packaged paths matching `.env`/`.env.*`, `*.pem`, `*.key`, or `id_rsa*`, excluding `.env.example`, `.env.sample`, and `.env.template`. It does not display file contents or npm's raw output. Exit codes: findings=1, none=0, unable to check=2; JSON output is not supported. Hints explain `.npmignore` replacing `.gitignore` and broad `files` entries; narrow `files` or add exclusions and scan again. Build-generated files must already exist because prepare/prepack/postpack do not run. Initial retrieval through npx requires network access; the scan itself runs offline.
+
+### Check Python startup files
+
+Run `ai-secret-check scan-python-startup` without arguments. Using Node.js only, it inspects `lib/python3*/site-packages` under a nonempty `VIRTUAL_ENV`, `./.venv`, `./venv`, and `$HOME/.local` (HOME falls back to the OS home). It counts `.pth` lines beginning with `import ` or `import\t`, and direct `.start`, `sitecustomize.py`, and `usercustomize.py` files. Resolved directories are counted once; links, including linked parents, are skipped. Output contains only fixed display labels, filenames, kinds and counts, never contents, full paths or raw errors. Exit codes: findings=1, none (including no locations)=0, invalid arguments or unreadable targets=2. It never launches Python or pip, writes files or accesses the network. Windows `Lib\site-packages`, macOS frameworks, conda and system installations are excluded. Package ownership lookup, risk judgments, automatic deletion and JSON output are unsupported. Legitimate packages can match; no findings does not guarantee safety.
 
 ### Check shell history
 
