@@ -38,6 +38,44 @@ function run(args, cwd, envOverrides = {}, entry = cliPath) {
 }
 
 
+test('scan text ends with the exact Star notice once for clean and finding results', (t) => {
+  const root = makeFixture(t);
+  const notice = '\n\nhttps://github.com/supportapp3-lab/ai-secret-check\n役に立ったら Star をお願いします\n';
+  for (const expected of [0, 1]) {
+    if (expected) write(root, '.env', 'DUMMY_VALUE_NOT_FOR_OUTPUT');
+    const result = run(['scan', root], root, { HOME: root });
+    assert.ifError(result.error);
+    assert.equal(result.status, expected);
+    assert.ok(result.stdout.endsWith(notice));
+    assert.equal(result.stdout.split('役に立ったら Star をお願いします').length - 1, 1);
+    const alias = run(['scan', root], root, { HOME: root }, path.join(__dirname, '../bin/legacy-command.js'));
+    assert.equal(alias.stdout, result.stdout);
+    assert.equal(alias.status, result.status);
+  }
+});
+
+test('scan JSON preserves the result structure and omits the notice', (t) => {
+  const root = makeFixture(t);
+  write(root, '.env', 'DUMMY_VALUE_NOT_FOR_OUTPUT');
+  const result = run(['scan', root, '--json'], root, { HOME: root });
+  assert.ifError(result.error);
+  assert.equal(result.status, 1);
+  const output = JSON.parse(result.stdout);
+  assert.deepEqual(Object.keys(output), ['results', 'warnings']);
+  assert.ok(Array.isArray(output.results) && Array.isArray(output.warnings));
+  assert.doesNotMatch(result.stdout, /github\.com\/supportapp3-lab\/ai-secret-check|Star/);
+});
+
+test('scan invalid directory and invalid arguments omit the notice from both streams', (t) => {
+  const root = makeFixture(t);
+  for (const args of [['scan', path.join(root, 'missing')], ['scan', root, 'extra']]) {
+    const result = run(args, root, { HOME: root });
+    assert.ifError(result.error);
+    assert.equal(result.status, 2);
+    assert.doesNotMatch(result.stdout + result.stderr, /github\.com\/supportapp3-lab\/ai-secret-check|Star/);
+  }
+});
+
 test('scan-logs reports secret kinds and counts without exposing dummy values', (t) => {
   const configDir = makeFixture(t);
   const dummySecrets = [
