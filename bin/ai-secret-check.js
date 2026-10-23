@@ -9,14 +9,16 @@ const { loadCodexSettings, assessCodex } = require('./codex-permissions');
 const { runScanHistory } = require('./scan-history');
 const { runScanPackage } = require('./scan-package');
 const { runScanDist } = require('./scan-dist');
+const { runScanShellHistory } = require('./scan-shell-history');
 
-const USAGE = 'Usage: ai-secret-check <scan|scan-history|scan-logs|scan-package|scan-dist> [ディレクトリ] [--json] [--out dist]';
+const USAGE = 'Usage: ai-secret-check <scan|scan-history|scan-logs|scan-package|scan-dist|scan-shell-history> [ディレクトリ] [--json] [--out dist]';
 const HELP = `${USAGE}
 
 コマンド:
   scan [ディレクトリ]          秘密情報らしいファイル名とエージェントの拒否設定を点検
   scan-history [ディレクトリ]  Git履歴に残った .env 系ファイルのパスを点検
   scan-logs                   Claude Codeの会話ログから既知の鍵形式を件数だけ報告
+  scan-shell-history          シェル履歴の秘密情報らしい行を件数だけ報告（JSON出力非対応）
   scan-package [ディレクトリ]  npmパッケージに入る秘密情報らしいパスを点検（JSON出力非対応）
   scan-dist [ディレクトリ] [--out dist]  ビルド出力の.env値を点検（値・JSON出力なし）
 
@@ -406,6 +408,13 @@ function scanLogs() {
 }
 
 function main(args) {
+  if (args[0] === 'scan-shell-history') {
+    if (args.length !== 1) {
+      console.error(USAGE);
+      return 2;
+    }
+    return runScanShellHistory();
+  }
   if (args[0] === 'scan-dist') return runScanDist(args.slice(1));
   if (args[0] === 'scan-package') {
     if (args.length > 2 || (args[1] && args[1].startsWith('-'))) {
