@@ -15,6 +15,22 @@ AIコーディングエージェントから `.env` や鍵が読めないかを�
 - bash・zshの履歴に残った秘密情報らしい行の件数（`scan-shell-history`）
 - Python起動用ファイルの import 行・ファイル件数（`scan-python-startup`）
 
+## 出力例
+
+ダミーの `.env`（`DUMMY=example`）を置き、拒否・除外設定のない一時ディレクトリで `node bin/ai-secret-check.js scan /path/to/project` を実行した結果です（修正例の一部を省略）。秘密の値やファイルの中身は出力されません。
+
+~~~text
+.env
+  Claude Code: 拒否設定なし → 読める可能性あり
+  Cursor: 除外設定なし → 読める可能性あり
+  Codex: 拒否設定なし → 読める可能性あり
+  修正例: Claude Code: "Read(./.env)" を permissions.deny に追加
+  修正例: Cursor: ./.env を .cursorignore に追加
+…
+https://github.com/supportapp3-lab/ai-secret-check
+役に立ったら Star をお願いします
+~~~
+
 `scan` は秘密情報らしい**ファイル名とパスだけ**を探し、拒否設定と照合します。`scan-logs` は指定の会話ログを読みますが、値は出力しません。点検で問題が見つからなくても、実際の読み取り防止や秘密情報が存在しないことを保証するものではありません。
 
 ## 必要環境とセットアップ
