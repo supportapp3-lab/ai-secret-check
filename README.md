@@ -4,7 +4,7 @@ AIコーディングエージェントから `.env` や鍵が読めないかを�
 
 役に立ったら Star を押してもらえると、続けて改善する励みになります。見落としや誤検出は Issue で教えてください。
 
-次の8項目を点検します。
+次の9項目を点検します。
 
 - Claude Codeの `permissions.deny`
 - Cursorの `.cursorignore`
@@ -14,6 +14,7 @@ AIコーディングエージェントから `.env` や鍵が読めないかを�
 - npmパッケージの配布対象に入る秘密ファイルらしいパス（`scan-package`）
 - bash・zshの履歴に残った秘密情報らしい行の件数（`scan-shell-history`）
 - Python起動用ファイルの import 行・ファイル件数（`scan-python-startup`）
+- 作業ディレクトリと親階層にある指示ファイルの場所とサイズ（`scan-instructions`）
 
 ## 出力例
 
@@ -64,6 +65,8 @@ node bin/ai-secret-check.js scan-shell-history
 node bin/ai-secret-check.js scan-python-startup
 node bin/ai-secret-check.js scan-history ./対象ディレクトリ
 node bin/ai-secret-check.js scan-history ./対象ディレクトリ --json
+node bin/ai-secret-check.js scan-instructions
+node bin/ai-secret-check.js scan-instructions ./対象ディレクトリ --json
 node bin/ai-secret-check.js scan-package ./対象ディレクトリ
 node bin/ai-secret-check.js --version
 node bin/ai-secret-check.js --help
@@ -209,6 +212,17 @@ NUL区切りでパスを扱い、追加したコミットの短いハッシュ�
 Gitリポジトリでない場合は「gitリポジトリではないため履歴は確認できません」と表示して0、コミットのない空リポジトリは0件で0です。
 `--json` は同じ判定と `path`・`commits`・`commitCount`・`inHead`・`sample`、対応手順を出します。
 
+### 指示ファイルの場所点検
+
+```sh
+node bin/ai-secret-check.js scan-instructions
+node bin/ai-secret-check.js scan-instructions ./対象ディレクトリ --json
+```
+
+指定ディレクトリ（省略時はカレントディレクトリ）と、その親からファイルシステムのルートまでを調べます。各階層の `CLAUDE.md`、`CLAUDE.local.md`、`.claude/CLAUDE.md`、`AGENTS.md`、`AGENTS.override.md` について、見つかったパス・ファイル名・サイズ（バイト）・対象より上の階層か・Gitルートの外かを表示します。Git管理外の対象ではその旨を表示します。ホームディレクトリのClaude Code / Codex設定ディレクトリ（`~/.claude/`、`~/.codex/`）は点検対象外です。
+
+ファイルの中身は読みません。作成・変更・外部通信もせず、Gitが利用できる場合もローカルの `git rev-parse --show-toplevel` でルートだけを確認します。指示ファイルの場所を示すだけで、各ツールが実際に読み込むかは各ツールの設定と公式ドキュメントを確認してください。見つからない場合はその旨を表示し、終了コード0で終了します。
+
 見つかったら、**最初に鍵・トークンを再発行（ローテーション）**してください。履歴を消しても、漏れた鍵は無効になりません。
 そのうえで必要なら、新しく取ったクローンで git-filter-repo 2.47以上の
 `git filter-repo --sensitive-data-removal --invert-paths --path <パス>` を実行し、force pushする手順を検討します。
@@ -326,6 +340,6 @@ Run `ai-secret-check scan-dist [directory] [--out dist]`, or `node bin/ai-secret
 
 Requires Node.js 20 or later. Run `npx github:supportapp3-lab/ai-secret-check scan`,
 or clone [the repository](https://github.com/supportapp3-lab/ai-secret-check) and
-run `node bin/ai-secret-check.js --help`. `scan` and `scan-history` support `--json`.
+run `node bin/ai-secret-check.js --help`. `scan`, `scan-history`, and `scan-instructions` support `--json`.
 Licensed under MIT. This package remains private and is not published to npm.
 

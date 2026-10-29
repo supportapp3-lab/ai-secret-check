@@ -11,13 +11,15 @@ const { runScanPackage } = require('./scan-package');
 const { runScanDist } = require('./scan-dist');
 const { runScanShellHistory } = require('./scan-shell-history');
 const { runScanPythonStartup } = require('./scan-python-startup');
+const { runScanInstructions } = require('./scan-instructions');
 
-const USAGE = 'Usage: ai-secret-check <scan|scan-history|scan-logs|scan-package|scan-dist|scan-shell-history|scan-python-startup> [ディレクトリ] [--json] [--out dist]';
+const USAGE = 'Usage: ai-secret-check <scan|scan-history|scan-instructions|scan-logs|scan-package|scan-dist|scan-shell-history|scan-python-startup> [ディレクトリ] [--json] [--out dist]';
 const HELP = `${USAGE}
 
 コマンド:
   scan [ディレクトリ]          秘密情報らしいファイル名とエージェントの拒否設定を点検
   scan-history [ディレクトリ]  Git履歴に残った .env 系ファイルのパスを点検
+  scan-instructions [ディレクトリ] 指示ファイルの場所とサイズだけを点検（中身は読みません）
   scan-logs                   Claude Codeの会話ログから既知の鍵形式を件数だけ報告
   scan-shell-history          シェル履歴の秘密情報らしい行を件数だけ報告（JSON出力非対応）
   scan-python-startup         Python起動時に自動実行される .pth の import 行などを件数だけ報告（JSON出力非対応）
@@ -25,7 +27,7 @@ const HELP = `${USAGE}
   scan-dist [ディレクトリ] [--out dist]  ビルド出力の.env値を点検（値・JSON出力なし）
 
 オプション:
-  --json     scan / scan-history の結果をJSONで表示
+  --json     scan / scan-history / scan-instructions の結果をJSONで表示
   --version  バージョンを表示
   --help     このヘルプを表示`;
 const SAMPLE_ENV_NAMES = new Set(['.env.example', '.env.sample', '.env.template']);
@@ -447,7 +449,7 @@ function main(args) {
     console.log(HELP);
     return 0;
   }
-  if (!['scan', 'scan-history'].includes(args[0])) {
+  if (!['scan', 'scan-history', 'scan-instructions'].includes(args[0])) {
     console.error(USAGE);
     return 2;
   }
@@ -460,11 +462,13 @@ function main(args) {
   }
   const jsonOutput = jsonIndexes.length === 1;
   const positional = rest.filter((value) => value !== '--json');
-  if (positional.length > 1 || (args[0] === 'scan-history' && positional.some((value) => value.startsWith('-')))) {
+  if (positional.length > 1 || (['scan-history', 'scan-instructions'].includes(args[0])
+      && positional.some((value) => value.startsWith('-')))) {
     console.error(USAGE);
     return 2;
   }
-  const run = args[0] === 'scan-history' ? runScanHistory : runScan;
+  const run = args[0] === 'scan-history' ? runScanHistory
+    : args[0] === 'scan-instructions' ? runScanInstructions : runScan;
   return run(positional[0] || process.cwd(), jsonOutput);
 }
 
