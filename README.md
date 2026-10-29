@@ -212,17 +212,6 @@ NUL区切りでパスを扱い、追加したコミットの短いハッシュ�
 Gitリポジトリでない場合は「gitリポジトリではないため履歴は確認できません」と表示して0、コミットのない空リポジトリは0件で0です。
 `--json` は同じ判定と `path`・`commits`・`commitCount`・`inHead`・`sample`、対応手順を出します。
 
-### 指示ファイルの場所点検
-
-```sh
-node bin/ai-secret-check.js scan-instructions
-node bin/ai-secret-check.js scan-instructions ./対象ディレクトリ --json
-```
-
-指定ディレクトリ（省略時はカレントディレクトリ）と、その親からファイルシステムのルートまでを調べます。各階層の `CLAUDE.md`、`CLAUDE.local.md`、`.claude/CLAUDE.md`、`AGENTS.md`、`AGENTS.override.md` について、見つかったパス・ファイル名・サイズ（バイト）・対象より上の階層か・Gitルートの外かを表示します。Git管理外の対象ではその旨を表示します。ホームディレクトリのClaude Code / Codex設定ディレクトリ（`~/.claude/`、`~/.codex/`）は点検対象外です。
-
-ファイルの中身は読みません。作成・変更・外部通信もせず、Gitが利用できる場合もローカルの `git rev-parse --show-toplevel` でルートだけを確認します。指示ファイルの場所を示すだけで、各ツールが実際に読み込むかは各ツールの設定と公式ドキュメントを確認してください。見つからない場合はその旨を表示し、終了コード0で終了します。
-
 見つかったら、**最初に鍵・トークンを再発行（ローテーション）**してください。履歴を消しても、漏れた鍵は無効になりません。
 そのうえで必要なら、新しく取ったクローンで git-filter-repo 2.47以上の
 `git filter-repo --sensitive-data-removal --invert-paths --path <パス>` を実行し、force pushする手順を検討します。
@@ -234,6 +223,17 @@ node bin/ai-secret-check.js scan-instructions ./対象ディレクトリ --json
 ローカル参照から到達できる履歴だけを見るため、未取得のリモート参照、フォーク、GitHubのキャッシュ、参照から到達できない古いオブジェクトは確認できません。
 浅いクローンや部分クローンなどで必要な履歴がない場合も、外部通信による補完はしません。Git実行は1回あたり60秒・出力16MiBを上限とし、超えた場合は成功扱いせず2で終了します。
 見つからなくても安全の保証にはなりません。
+
+### 指示ファイルの場所点検
+
+```sh
+node bin/ai-secret-check.js scan-instructions
+node bin/ai-secret-check.js scan-instructions ./対象ディレクトリ --json
+```
+
+指定ディレクトリ（省略時はカレントディレクトリ）と、その親からファイルシステムのルートまでを調べます。各階層の `CLAUDE.md`、`CLAUDE.local.md`、`.claude/CLAUDE.md`、`AGENTS.md`、`AGENTS.override.md` について、見つかったパス・ファイル名・サイズ（バイト）・対象より上の階層か・Gitルートの外かを表示します。Git管理外の対象ではその旨を表示します。ホームディレクトリのClaude Code / Codex設定ディレクトリ（`~/.claude/`、`~/.codex/`）は点検対象外です。
+
+ファイルの中身は読みません。作成・変更・外部通信もせず、Gitが利用できる場合もローカルの `git rev-parse --show-toplevel` でルートだけを確認します。指示ファイルの場所を示すだけで、各ツールが実際に読み込むかは各ツールの設定と公式ドキュメントを確認してください。見つからない場合はその旨を表示し、終了コード0で終了します。
 
 ### npmパッケージの配布ファイル点検
 
