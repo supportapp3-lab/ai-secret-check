@@ -115,11 +115,11 @@ test('official env glob distinguishes suffixes and warns on deeper files', (t) =
 test('three patterns with sufficient depth cover detected env names and omit correction', (t) => {
   const f = fixture(t);
   FILES.forEach((name) => write(f.root, name));
-  write(f.root, 'app/prod.env'); // Discovery stays unchanged by issue owner's clarification.
+  write(f.root, 'app/prod.env'); // scan discovers this filename; Codex rules are still matched independently.
   write(f.config, 'config.toml', profile(['**/.env', '**/.env.*', '**/*.env'], 6));
   both(f, (text, data) => {
     if (data) {
-      assert.equal(data.results.length, FILES.length);
+      assert.equal(data.results.length, FILES.length + 1);
       for (const row of data.results) {
         assert.match(row.agents.codex, /拒否設定あり/);
         assert.equal(row.suggestions.codex, null);
