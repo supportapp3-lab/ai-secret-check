@@ -81,7 +81,7 @@ node bin/ai-secret-check.js --help
 
 ## 検出と照合
 
-検出対象は .env と .env.*、*.pem / *.key / *.p12 / *.pfx、id_rsa / id_ed25519 / id_ecdsa です。.env.example、.env.sample、.env.template はサンプルとして別扱いにし、*.pub は除外します。.git/ と node_modules/ は走査せず、シンボリックリンクもたどりません。
+`scan` は .env、.env.*、*.env、.env~、*.pem / *.key / *.p12 / *.pfx、id_rsa / id_ed25519 / id_ecdsa をファイル名で検出します。.env.example、.env.sample、.env.template はサンプルとして別扱いにし、*.pub は除外します。.git/ と node_modules/ は走査せず、シンボリックリンクもたどりません。
 
 - **Claude Code**: プロジェクトの .claude/settings.json と .claude/settings.local.json、およびユーザーの ~/.claude/settings.json にある permissions.deny の Read(...) ルールを対象パスに照合します。CLAUDE_CONFIG_DIR が設定されている場合は、そのディレクトリの settings.json をユーザー設定として読みます。拒否設定が見つかった場合は設定ファイルの場所を表示し、そのファイル向けの修正例は出しません。ユーザー設定が見つからない、読めない、JSONとして不正な場合は警告して続行します。.claudeignore があれば警告します。2026-10-15に確認した公式設定資料はJSON形式の設定と permissions.deny を案内し、.claudeignore をアクセス制御設定として記載していません。拒否ルールの存在確認は、OSレベルの読み取り防止を保証しません。
 - **Cursor**: ルートの .cursorignore をgitignore形式のパターンとして照合します。一致したファイルもターミナルやMCP経由で読める可能性があります。.cursorignore は完全な保護境界ではありません。
@@ -138,7 +138,7 @@ globは `*`・`**`・`?` に対応し、文字クラスなど未対応のルー�
 限界: 仕様はBetaで変わる可能性があります。Issue #15で報告された実機確認はCodex CLI 0.163.0・Linuxだけで、macOS・Windowsの実際の遮断動作は未確認です。
 この変更のテストはダミー設定の静的照合であり、拒否設定があってもOSレベルの読み取り防止を保証しません。
 `/etc/codex/config.toml`、managed `requirements.toml`、`--profile`・CLI引数による上書き、network、`:root`・絶対パスのdeny、Git履歴にある値は対象外です。
-ファイルの検出対象は従来どおりで、`app/prod.env` など `*.env` 全般への拡張はしていません。そのパスは照合単体テストだけで確認します。
+`scan` は `app/prod.env` など `*.env` と `.env~` もファイル名で検出します。この範囲は `scan-package`、`scan-history`、`scan-dist` には適用しません。
 
 ### 会話ログの鍵点検（試験版）
 

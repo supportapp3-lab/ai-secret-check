@@ -157,6 +157,10 @@ test('deprecated command alias adds one stderr line while preserving stdout and 
 test('scan finds secret-like names without reading file values and skips excluded paths', (t) => {
   const root = makeFixture(t);
   write(root, '.env', 'SECRET_VALUE_SHOULD_NOT_APPEAR');
+  write(root, 'config/prod.env', 'SECRET_VALUE_SHOULD_NOT_APPEAR');
+  write(root, 'config/local.env', 'SECRET_VALUE_SHOULD_NOT_APPEAR');
+  write(root, '.env~', 'SECRET_VALUE_SHOULD_NOT_APPEAR');
+  write(root, 'environment.js', 'NOT_AN_ENV_FILENAME');
   write(root, 'nested/.env.production', 'SECRET_VALUE_SHOULD_NOT_APPEAR');
   write(root, '.env.example', 'EXAMPLE_VALUE');
   write(root, 'keys/server.pem', 'PRIVATE_KEY_VALUE');
@@ -169,10 +173,13 @@ test('scan finds secret-like names without reading file values and skips exclude
   assert.ifError(result.error);
   assert.equal(result.status, 1);
   assert.match(result.stdout, /\.env\.example\s+\[サンプル・INFO\]/);
+  assert.match(result.stdout, /config\/prod\.env/);
+  assert.match(result.stdout, /config\/local\.env/);
+  assert.match(result.stdout, /\.env~/);
   assert.match(result.stdout, /nested\/\.env\.production/);
   assert.match(result.stdout, /keys\/server\.pem/);
   assert.match(result.stdout, /keys\/id_ed25519/);
-  assert.doesNotMatch(result.stdout, /node_modules|\.git\/|\.pub|SECRET_VALUE_SHOULD_NOT_APPEAR|PRIVATE_KEY_VALUE|PUBLIC_KEY_VALUE|DEPENDENCY_SECRET|GIT_SECRET/);
+  assert.doesNotMatch(result.stdout, /environment\.js|NOT_AN_ENV_FILENAME|node_modules|\.git\/|\.pub|SECRET_VALUE_SHOULD_NOT_APPEAR|PRIVATE_KEY_VALUE|PUBLIC_KEY_VALUE|DEPENDENCY_SECRET|GIT_SECRET/);
 
   const sampleOnly = makeFixture(t);
   write(sampleOnly, '.env.sample', 'SAMPLE_SECRET');
