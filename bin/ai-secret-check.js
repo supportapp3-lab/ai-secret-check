@@ -186,7 +186,8 @@ function loadClaudeDenyPatterns(root, warnings) {
 function isSensitivePath(name) {
   const lower = name.toLowerCase();
   if (lower.endsWith('.pub')) return false;
-  if (name === '.env' || (name.startsWith('.env.') && !SAMPLE_ENV_NAMES.has(name))) return true;
+  if (name === '.env' || lower.endsWith('.env') || lower === '.env~'
+    || (name.startsWith('.env.') && !SAMPLE_ENV_NAMES.has(name))) return true;
   if (SAMPLE_ENV_NAMES.has(name)) return true;
   if (KEY_NAMES.has(name)) return true;
   return ['.pem', '.key', '.p12', '.pfx'].some((suffix) => lower.endsWith(suffix));
