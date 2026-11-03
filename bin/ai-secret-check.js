@@ -261,7 +261,26 @@ function assessFiles(root, files, warnings) {
   });
 }
 
-function renderText(results, warnings) {
+function findParentEnvFiles(directory) {
+  const found = [];
+  const start = path.resolve(directory);
+  let parent = path.dirname(start);
+  if (parent === start) return found;
+  while (true) {
+    const candidate = path.join(parent, '.env');
+    try {
+      if (fs.lstatSync(candidate).isFile()) found.push(candidate);
+    } catch {
+      // Missing or inaccessible ancestors do not affect the scan result.
+    }
+    const next = path.dirname(parent);
+    if (next === parent) break;
+    parent = next;
+  }
+  return found;
+}
+
+function renderText(results, warnings, parentEnvFiles = []) {
   const lines = results.length === 0 ? ['読めそうなファイルは見つかりませんでした。'] : [];
   for (const item of results) {
     lines.push(`${item.path}${item.sample ? '  [サンプル・INFO]' : ''}`);
@@ -278,6 +297,10 @@ function renderText(results, warnings) {
     for (const warning of item.warnings) lines.push(`  警告: ${warning}`);
   }
   for (const warning of warnings) lines.push(`警告: ${warning}`);
+  if (parentEnvFiles.length > 0) {
+    lines.push('\n親フォルダの .env（python-dotenv の load_dotenv() などが読むことがあります）:');
+    lines.push(...parentEnvFiles);
+  }
   return lines.join('\n');
 }
 
@@ -301,7 +324,7 @@ function runScan(directory, jsonOutput) {
   if (jsonOutput) {
     console.log(JSON.stringify({ results, warnings }, null, 2));
   } else {
-    console.log(renderText(results, warnings));
+    console.log(renderText(results, warnings, findParentEnvFiles(process.cwd())));
     console.log('\nhttps://github.com/supportapp3-lab/ai-secret-check\n役に立ったら Star をお願いします');
   }
   return files.some((file) => !file.sample) ? 1 : 0;
