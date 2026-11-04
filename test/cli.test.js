@@ -97,6 +97,32 @@ test('scan text omits nonexistent ancestor .env and .env.* paths within the fixt
   assert.deepEqual(result.stdout.split(/\r?\n/).filter((line) => line.startsWith(root)), []);
 });
 
+test('scan explicit target searches its ancestors instead of cwd ancestors', (t) => {
+  const root = makeFixture(t);
+  const cwdParent = path.join(root, 'cwd-only');
+  const cwd = path.join(cwdParent, 'a');
+  const targetParent = path.join(root, 'target-only', 'b');
+  const project = path.join(targetParent, 'project');
+  fs.mkdirSync(cwd, { recursive: true });
+  fs.mkdirSync(project, { recursive: true });
+  write(cwdParent, '.env', 'CWD_PARENT_DUMMY_VALUE');
+  write(cwd, '.env', 'CWD_DUMMY_VALUE');
+  write(targetParent, '.env', 'TARGET_PARENT_DUMMY_VALUE');
+  for (const target of [path.relative(cwd, project), project]) {
+    const result = run(['scan', target], cwd);
+    assert.ifError(result.error);
+    assert.equal(result.status, 0);
+    const fixturePaths = result.stdout.split(/\r?\n/).filter((line) => line.startsWith(root));
+    assert.deepEqual(fixturePaths, [path.join(targetParent, '.env')]);
+    assert.doesNotMatch(result.stdout, /DUMMY_VALUE/);
+    const json = run(['scan', target, '--json'], cwd);
+    assert.ifError(json.error);
+    assert.equal(json.status, 0);
+    assert.deepEqual(JSON.parse(json.stdout), { results: [], warnings: [] });
+    assert.doesNotMatch(json.stdout, /親フォルダ|DUMMY_VALUE/);
+  }
+});
+
 test('ancestor .env leaves scan JSON and exit codes unchanged for clean and finding scans', (t) => {
   const root = makeFixture(t);
   const project = path.join(root, 'project');
