@@ -66,6 +66,57 @@ test('scan JSON preserves the result structure and omits the notice', (t) => {
   assert.doesNotMatch(result.stdout, /github\.com\/supportapp3-lab\/ai-secret-check|Star/);
 });
 
+test('scan text lists ancestor .env paths without reading their contents or changing exit status', (t) => {
+  const root = makeFixture(t);
+  const parent = path.join(root, 'parent');
+  const project = path.join(parent, 'project');
+  fs.mkdirSync(project, { recursive: true });
+  write(root, '.env', 'ROOT_DUMMY_VALUE_NOT_FOR_OUTPUT');
+  write(parent, '.env', 'PARENT_DUMMY_VALUE_NOT_FOR_OUTPUT');
+  write(parent, '.env.local', 'OTHER_DUMMY_VALUE_NOT_FOR_OUTPUT');
+  const result = run(['scan'], project);
+  assert.ifError(result.error);
+  assert.equal(result.status, 0);
+  const heading = '親フォルダの .env（python-dotenv の load_dotenv() などが読むことがあります）:';
+  assert.ok(result.stdout.includes(heading));
+  const fixturePaths = result.stdout.split(/\r?\n/).filter((line) => line.startsWith(root));
+  assert.deepEqual(fixturePaths, [path.join(parent, '.env'), path.join(root, '.env')]);
+  assert.doesNotMatch(result.stdout, /DUMMY_VALUE_NOT_FOR_OUTPUT/);
+});
+
+test('scan text omits nonexistent ancestor .env and .env.* paths within the fixture', (t) => {
+  const root = makeFixture(t);
+  const project = path.join(root, 'parent', 'project');
+  fs.mkdirSync(project, { recursive: true });
+  write(root, 'parent/.env.local', 'DUMMY_VALUE_NOT_FOR_OUTPUT');
+  fs.mkdirSync(path.join(root, '.env'));
+  const result = run(['scan'], project);
+  assert.ifError(result.error);
+  assert.equal(result.status, 0);
+  // Do not depend on any real .env above the temporary fixture.
+  assert.deepEqual(result.stdout.split(/\r?\n/).filter((line) => line.startsWith(root)), []);
+});
+
+test('ancestor .env leaves scan JSON and exit codes unchanged for clean and finding scans', (t) => {
+  const root = makeFixture(t);
+  const project = path.join(root, 'project');
+  fs.mkdirSync(project);
+  for (const expected of [0, 1]) {
+    if (expected) write(project, '.env', 'PROJECT_DUMMY_VALUE_NOT_FOR_OUTPUT');
+    fs.rmSync(path.join(root, '.env'), { force: true });
+    const before = run(['scan', '--json'], project);
+    write(root, '.env', 'PARENT_DUMMY_VALUE_NOT_FOR_OUTPUT');
+    const after = run(['scan', '--json'], project);
+    assert.ifError(before.error);
+    assert.ifError(after.error);
+    assert.equal(before.status, expected);
+    assert.equal(after.status, expected);
+    assert.equal(after.stdout, before.stdout);
+    assert.deepEqual(Object.keys(JSON.parse(after.stdout)), ['results', 'warnings']);
+    assert.doesNotMatch(after.stdout, /親フォルダ|PARENT_DUMMY_VALUE_NOT_FOR_OUTPUT/);
+  }
+});
+
 test('scan invalid directory and invalid arguments omit the notice from both streams', (t) => {
   const root = makeFixture(t);
   for (const args of [['scan', path.join(root, 'missing')], ['scan', root, 'extra']]) {
