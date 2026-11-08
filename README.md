@@ -4,7 +4,7 @@ AIコーディングエージェントから `.env` や鍵が読めないかを�
 
 役に立ったら Star を押してもらえると、続けて改善する励みになります。見落としや誤検出は Issue で教えてください。
 
-次の9項目を点検します。
+次の10項目を点検します。
 
 - Claude Codeの `permissions.deny`
 - Cursorの `.cursorignore`
@@ -15,6 +15,7 @@ AIコーディングエージェントから `.env` や鍵が読めないかを�
 - bash・zshの履歴に残った秘密情報らしい行の件数（`scan-shell-history`）
 - Python起動用ファイルの import 行・ファイル件数（`scan-python-startup`）
 - 作業ディレクトリと親階層にある指示ファイルの場所とサイズ（`scan-instructions`）
+- 明示的opt-inで、ソース内の `debuglevel=1` とURLクエリの `api_key` の危険候補（`scan-code`）
 
 ## 出力例
 
@@ -60,6 +61,8 @@ git clone https://github.com/supportapp3-lab/ai-secret-check.git && cd ai-secret
 node bin/ai-secret-check.js scan
 node bin/ai-secret-check.js scan ./対象ディレクトリ
 node bin/ai-secret-check.js scan ./対象ディレクトリ --json
+node bin/ai-secret-check.js scan-code ./対象ディレクトリ
+node bin/ai-secret-check.js scan-code ./対象ディレクトリ --json
 node bin/ai-secret-check.js scan-logs
 node bin/ai-secret-check.js scan-shell-history
 node bin/ai-secret-check.js scan-python-startup
@@ -79,6 +82,27 @@ node bin/ai-secret-check.js --help
 調べる対象フォルダの親からファイルシステムのルートまでにある `.env` は、存在だけを確認し、パスを注意書きとして表示します（python-dotenv の `load_dotenv()` などが読むことがあります）。中身は読まず、`.env.*` は対象外で、`--json` と終了コードには影響しません。
 
 ディレクトリを省略するとカレントディレクトリを調べます。--version と引数なしの使い方表示も利用できます。終了コードは、読めそうな対象ファイルがない場合 0、ある場合 1、引数や対象ディレクトリが不正な場合 2 です。サンプル環境変数ファイルだけの場合は INFO として表示し、終了コードは 0 です。
+
+### ソースの危険候補を点検する（明示的opt-in）
+
+```sh
+node bin/ai-secret-check.js scan-code [ディレクトリ] [--json]
+```
+
+`scan-code` を明示的に実行したときだけ内容を読みます。省略時はcwdで、親フォルダやユーザー設定を内容検査しません。既存の `scan` は引き続きファイル名と拒否設定だけを点検し、出力・JSON・終了コード・親 `.env` の注意書きも変わりません。
+
+- 対象は `.py` / `.js` / `.mjs` / `.cjs` / `.ts` / `.tsx` / `.jsx`（拡張子の大文字小文字は不問）の通常UTF-8ソース。対象ソースを実行・importせず、Node標準機能のみで読み取ります。書込み・削除・自動修正・外部コマンド実行・通信・送信はしません。
+- Pythonのみ `debuglevel = 1` の代入や `f(debuglevel=1)` の呼出し引数を、1行単位で文字照合します。空白・タブに対応。`0` / `10` / `== 1`、通常のlogging DEBUGは非検出です。`1` の後が行末・`,`・`)`・`;`・`#` の場合を扱い、`1.0`・`1e2`・計算式は解釈しません。文字列の例でも、その区切り条件を満たせば検出し得ます。
+- HTTP(S)の文字列リテラルやコメント等に、同じ行で連続して書かれたURLの `?api_key=値` / `&api_key=値` を点検します。クエリ名は小文字の `api_key` 完全一致のみ、値が空・フラグメント内・別のクエリ名・URLでない変数名は非検出。URLスキームは大文字小文字を問いません。引用符・空白・バックスラッシュでURLを区切り、末尾の `)` / `,` / `;` / `]` はソースの区切りとして扱います。`{}` / `$` を含む値は動的プレースホルダーとして対象外です。URLや値の正当性・本物の鍵かどうかを検証する機能ではありません。
+- 既存の秘密ファイル名判定を優先して除外します。追加で `.env` 始まり、名前に `.env`＋末尾/`.`/`~`/`_`/`-` を含むもの（サンプル・バックアップ・ソース拡張子付きも含む）、秘密鍵名・`.pem` / `.key` / `.p12` / `.pfx` のバックアップも除外。区切り文字付きの `credential(s)` / `secret(s)` / `token(s)` を名前に含むファイル・フォルダも内容検査しません。値を秘匿できる保証としてこの名前判定を使わないでください。
+- `.git` / `.hg` / `.svn`、`node_modules` / `vendor` / `.venv` / `venv`、`dist` / `build`、認証・設定領域 `.ssh` / `.aws` / `.azure` / `.gnupg` / `.config` / `.codex` / `.claude` は入らず、これらを対象ルートやルートの途中に指定した場合も終了2。リンクはファイル・ディレクトリとも追わず、ルートやその親がリンクなら拒否します。
+- 1ファイル1 MiB（1,048,576バイト）を上限とし、サイズ超過はopen前に除外。最初の最大8 KiBでNUL・制御文字を調べ、バイナリなら残りを読みません。その後も全体の制御文字・不正UTF-8を除外します。増大検知用の1バイトを含め、1ファイルの実読取りは最大1 MiB＋1バイトに制限します。読取り前後のファイル/各親ディレクトリのリンク・種類・識別子、ファイルのサイズ/更新時刻を確認し、可能な環境では `O_NOFOLLOW` も使います。Node標準機能だけでは、同時に別プロセスが繰り返し差し替えるすべての競合を完全には排除できません。変更中のツリーで実行しないでください。
+
+検出項目の出力は、対象内の**相対パス・1始まりの行番号・固定種別**（`python_debuglevel_1` / `url_query_api_key`）だけです。1行・1種別につき1件にまとめ、値・URL・該当行・抜粋・生の例外はstdout/stderr/JSONに出しません。テキストのパスはJSON文字列としてエスケープします。JSONは `findings` / `complete` / `excluded` / 固定の `policy` と、未完了時の固定 `message` です。除外件数は入らなかったディレクトリも1件と数え、その中のファイル数を意味しません。
+
+終了コードは候補あり=1、対応範囲内の候補なし=0、引数・対象不正・読取り失敗・差し替え検知などの検査未完了=2。候補があっても未完了なら2です。リンク・バイナリ・サイズ超過等の意図的除外は件数と方針を案内し、未読を「安全」と扱いません。
+
+結果は危険候補のヒューリスティックで、漏洩を断定しません。コメント `# debuglevel=1` やドキュメント用URLも検出し、誤検知になり得ます。一方、変数・関数・文字列連結・テンプレート展開で生成するURL/値、別名、難読化、URLエンコード、複数行の表現は見逃し得ます（例: `"https://example.invalid/?api_key=" + value` は非検出）。**見つからない＝安全ではありません。**
 
 ## 検出と照合
 
@@ -317,6 +341,25 @@ and `.env` paths recorded in Git history. It does not print secret values, modif
 files, or make network requests. Results are advisory and do not guarantee that
 secrets are protected.
 
+`scan-code [directory] [--json]` is a separate, explicit opt-in source-content check;
+omitting the directory uses cwd. The existing filename-only `scan` behavior is unchanged.
+It checks Python `debuglevel=1` assignments/call arguments and same-line literal HTTP(S)
+URL queries with a nonempty, exact lowercase `api_key`. Findings contain only a relative
+path, a 1-based line number and a fixed type, never values, URLs, snippets or raw errors.
+It reads regular UTF-8 `.py/.js/.mjs/.cjs/.ts/.tsx/.jsx` files only, skips secret/env/key
+and credential-like names (including backups), VCS/dependencies/build output and known
+credential/config directories, and never follows links or reads ancestor contents.
+Files over 1 MiB are skipped before opening; an 8 KiB binary probe and a total cap of
+1 MiB + one growth-detection byte bound reads. Invalid UTF-8/control-byte files are excluded.
+Root/parent links are rejected; identities and metadata are rechecked around opens/reads,
+but portable Node APIs cannot eliminate every concurrent replacement race.
+JSON includes `findings`, `complete`, an intentional-exclusion count, a fixed policy
+and a fixed message if incomplete. Exit codes: candidates=1, none within scope=0,
+invalid arguments/target or incomplete reads=2 (even with findings). Excluded or unread
+input is never declared safe. Comments/examples can match; dynamic, encoded, aliased,
+obfuscated or multiline expressions may be missed. No execution/import, subprocesses,
+writes, network, automatic fixes or sends occur. No findings does not mean safe.
+
 If you find this useful, please give it a Star to encourage continued improvements, and report missed detections or false positives in an Issue.
 
 Completed text-mode `scan` output ends with the repository URL and a Star invitation; use the existing `--json` output for machine processing without this notice.
@@ -341,6 +384,6 @@ Run `ai-secret-check scan-dist [directory] [--out dist]`, or `node bin/ai-secret
 
 Requires Node.js 20 or later. Run `npx github:supportapp3-lab/ai-secret-check scan`,
 or clone [the repository](https://github.com/supportapp3-lab/ai-secret-check) and
-run `node bin/ai-secret-check.js --help`. `scan`, `scan-history`, and `scan-instructions` support `--json`.
+run `node bin/ai-secret-check.js --help`. `scan`, `scan-code`, `scan-history`, and `scan-instructions` support `--json`.
 Licensed under MIT. This package remains private and is not published to npm.
 
