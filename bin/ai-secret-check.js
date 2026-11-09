@@ -12,12 +12,14 @@ const { runScanDist } = require('./scan-dist');
 const { runScanShellHistory } = require('./scan-shell-history');
 const { runScanPythonStartup } = require('./scan-python-startup');
 const { runScanInstructions } = require('./scan-instructions');
+const { runScanCode } = require('./scan-code');
 
-const USAGE = 'Usage: ai-secret-check <scan|scan-history|scan-instructions|scan-logs|scan-package|scan-dist|scan-shell-history|scan-python-startup> [ディレクトリ] [--json] [--out dist]';
+const USAGE = 'Usage: ai-secret-check <scan|scan-code|scan-history|scan-instructions|scan-logs|scan-package|scan-dist|scan-shell-history|scan-python-startup> [ディレクトリ] [--json] [--out dist]';
 const HELP = `${USAGE}
 
 コマンド:
   scan [ディレクトリ]          秘密情報らしいファイル名とエージェントの拒否設定を点検
+  scan-code [ディレクトリ]     明示的opt-inでソース内のdebuglevel/APIクエリ/エラー丸ごと出力候補を点検（値は出しません）
   scan-history [ディレクトリ]  Git履歴に残った .env 系ファイルのパスを点検
   scan-instructions [ディレクトリ] 指示ファイルの場所とサイズだけを点検（中身は読みません）
   scan-logs                   Claude Codeの会話ログから既知の鍵形式を件数だけ報告
@@ -27,7 +29,7 @@ const HELP = `${USAGE}
   scan-dist [ディレクトリ] [--out dist]  ビルド出力の.env値を点検（値・JSON出力なし）
 
 オプション:
-  --json     scan / scan-history / scan-instructions の結果をJSONで表示
+  --json     scan / scan-code / scan-history / scan-instructions の結果をJSONで表示
   --version  バージョンを表示
   --help     このヘルプを表示`;
 const SAMPLE_ENV_NAMES = new Set(['.env.example', '.env.sample', '.env.template']);
@@ -436,6 +438,7 @@ function scanLogs() {
 }
 
 function main(args) {
+  if (args[0] === 'scan-code') return runScanCode(args.slice(1), isSensitivePath);
   if (args[0] === 'scan-python-startup') {
     if (args.length !== 1) {
       console.error(USAGE);
