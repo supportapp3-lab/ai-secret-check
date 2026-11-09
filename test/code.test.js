@@ -69,6 +69,74 @@ function inProcess(t, args, patches = {}) {
   return { stdout, stderr, status };
 }
 
+test('scan-code: whole error object calls in every JS/TS extension, text and JSON keep fixed fields only', (t) => {
+  const root = fixture(t);
+  const source = [
+    `const privateValue = '${marker}';`,
+    'try {} catch (err) { console.log(err); }',
+    'try {} catch (error) { console.error(error); }',
+    'promise.catch(e => { console.warn(e); });',
+    'promise.catch(err => console.info(err));',
+    'promise.catch(function(error) { console.debug(error); });',
+    'promise.catch(err => JSON.stringify(err));',
+    'console \t. log ( error )',
+    'JSON . stringify ( e )',
+    'console.log(err); console.error(error);',
+  ].join('\r\n');
+  const expected = [];
+  for (const ext of ['cjs', 'js', 'jsx', 'mjs', 'ts', 'tsx']) {
+    write(root, `src/example.${ext}`, source);
+    for (let line = 2; line <= 10; line++) expected.push({ path: `src/example.${ext}`, line, type: 'js_error_object_output' });
+  }
+  const json = run(root);
+  assert.equal(json.status, 1);
+  assert.equal(json.stderr, '');
+  assert.equal(JSON.parse(json.stdout).complete, true);
+  assert.deepEqual(JSON.parse(json.stdout).findings, expected);
+  const text = run(root, ['scan-code', root]);
+  assert.equal(text.status, 1);
+  assert.equal(text.stderr, '');
+  assert.deepEqual(text.stdout.split('\n').filter((line) => line.includes('js_error_object_output')),
+    expected.map((f) => `${JSON.stringify(f.path)}:${f.line} ${f.type}`));
+  for (const output of [json.stdout, text.stdout]) {
+    assert.doesNotMatch(output, /console|JSON\.stringify|privateValue|promise|catch/);
+  }
+});
+
+test('scan-code: properties, interpolation, unrelated names and extra arguments do not flag error objects', (t) => {
+  const root = fixture(t);
+  write(root, 'safe.ts', [
+    'try {} catch (err) { console.log(err.message); }',
+    'console.error(err.response?.status)',
+    'console.log(`${err.message}`)',
+    'console.log(data)', 'JSON.stringify(data)',
+    'console.warn(err, data)', 'JSON.stringify(error, null, 2)',
+    'console.log({err})', 'console.log(...err)', 'console.log(err || data)',
+    'other.console.log(err)', 'myconsole.log(err)', '$console.log(err)',
+    'notJSON.stringify(err)', 'console.table(err)', 'console.LOG(err)',
+    'console.log(\nerr\n)', 'console["log"](err)',
+  ].join('\n'));
+  write(root, 'not-javascript.py', 'console.log(err)\nJSON.stringify(error)');
+  for (const args of [['scan-code', root], ['scan-code', root, '--json']]) {
+    const r = run(root, args);
+    assert.equal(r.status, 0);
+    assert.doesNotMatch(r.stdout + r.stderr, /js_error_object_output/);
+    if (args.includes('--json')) assert.deepEqual(JSON.parse(r.stdout).findings, []);
+  }
+});
+
+test('scan-code: name-heuristic false positives and misses agree with documented limits', () => {
+  const source = [
+    'const err = {}; console.log(err);',
+    '// console.error(error)',
+    'const example = "JSON.stringify(e)";',
+    'try {} catch (failure) { console.log(failure); }',
+  ].join('\n');
+  assert.deepEqual(detect(source, 'demo.JS'), [1, 2, 3].map((line) => ({
+    path: 'demo.JS', line, type: 'js_error_object_output',
+  })));
+});
+
 test('scan-code: Python assignments/call keywords, relative paths and 1-based lines', (t) => {
   const root = fixture(t);
   write(root, 'src/demo.py', '\nhttp.client.HTTPConnection.debuglevel = 1\r\nf(debuglevel=1)\rx(debuglevel\t=\t1, other=2)\n');

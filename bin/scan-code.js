@@ -101,6 +101,12 @@ function detect(contents, relativePath) {
         return match && !/[{}$]/.test(match[1]);
       });
     })) findings.push({ path: relativePath, line: index + 1, type: 'url_query_api_key' });
+    // Explicitly name-based, not catch-scope analysis. Require exactly one bare
+    // argument; property references, interpolation and additional arguments do not match.
+    if (path.extname(relativePath).toLowerCase() !== '.py'
+        && /(?<![\w$.])(?:console[ \t]*\.[ \t]*(?:log|error|warn|info|debug)|JSON[ \t]*\.[ \t]*stringify)[ \t]*\([ \t]*(?:err|error|e)[ \t]*\)/.test(line)) {
+      findings.push({ path: relativePath, line: index + 1, type: 'js_error_object_output' });
+    }
   });
   return findings;
 }

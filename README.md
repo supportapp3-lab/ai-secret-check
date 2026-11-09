@@ -15,7 +15,7 @@ AIコーディングエージェントから `.env` や鍵が読めないかを�
 - bash・zshの履歴に残った秘密情報らしい行の件数（`scan-shell-history`）
 - Python起動用ファイルの import 行・ファイル件数（`scan-python-startup`）
 - 作業ディレクトリと親階層にある指示ファイルの場所とサイズ（`scan-instructions`）
-- 明示的opt-inで、ソース内の `debuglevel=1` とURLクエリの `api_key` の危険候補（`scan-code`）
+- 明示的opt-inで、ソース内の `debuglevel=1`、URLクエリの `api_key`、エラー丸ごと出力の危険候補（`scan-code`）
 
 ## 出力例
 
@@ -94,11 +94,12 @@ node bin/ai-secret-check.js scan-code [ディレクトリ] [--json]
 - 対象は `.py` / `.js` / `.mjs` / `.cjs` / `.ts` / `.tsx` / `.jsx`（拡張子の大文字小文字は不問）の通常UTF-8ソース。対象ソースを実行・importせず、Node標準機能のみで読み取ります。書込み・削除・自動修正・外部コマンド実行・通信・送信はしません。
 - Pythonのみ `debuglevel = 1` の代入や `f(debuglevel=1)` の呼出し引数を、1行単位で文字照合します。空白・タブに対応。`0` / `10` / `== 1`、通常のlogging DEBUGは非検出です。`1` の後が行末・`,`・`)`・`;`・`#` の場合を扱い、`1.0`・`1e2`・計算式は解釈しません。文字列の例でも、その区切り条件を満たせば検出し得ます。
 - HTTP(S)の文字列リテラルやコメント等に、同じ行で連続して書かれたURLの `?api_key=値` / `&api_key=値` を点検します。クエリ名は小文字の `api_key` 完全一致のみ、値が空・フラグメント内・別のクエリ名・URLでない変数名は非検出。URLスキームは大文字小文字を問いません。引用符・空白・バックスラッシュでURLを区切り、末尾の `)` / `,` / `;` / `]` はソースの区切りとして扱います。`{}` / `$` を含む値は動的プレースホルダーとして対象外です。URLや値の正当性・本物の鍵かどうかを検証する機能ではありません。
+- JavaScript/TypeScriptの6拡張子では、`console.log/error/warn/info/debug` または `JSON.stringify` に `err` / `error` / `e` を引数1つだけ丸ごと渡す同一行の呼出しを `js_error_object_output` として検出します。空白・タブに対応します。catchとの対応づけをしない**識別子名のヒューリスティック**です。catch外でも同名なら候補になる一方、別名のcatch引数は見逃します。コメント・文字列のサンプルも一致し得て、shadowingや独自のconsole/JSONは区別しません。プロパティ参照（`err.message`、`err.response?.status`）、テンプレート埋込み、`data`など別の名前、複数引数、複数行、別名・ブラケット表記は対象外です。漏洩やaxios由来とは断定しません。
 - 既存の秘密ファイル名判定を優先して除外します。追加で `.env` 始まり、名前に `.env`＋末尾/`.`/`~`/`_`/`-` を含むもの（サンプル・バックアップ・ソース拡張子付きも含む）、秘密鍵名・`.pem` / `.key` / `.p12` / `.pfx` のバックアップも除外。区切り文字付きの `credential(s)` / `secret(s)` / `token(s)` を名前に含むファイル・フォルダも内容検査しません。値を秘匿できる保証としてこの名前判定を使わないでください。
 - `.git` / `.hg` / `.svn`、`node_modules` / `vendor` / `.venv` / `venv`、`dist` / `build`、認証・設定領域 `.ssh` / `.aws` / `.azure` / `.gnupg` / `.config` / `.codex` / `.claude` は入らず、これらを対象ルートやルートの途中に指定した場合も終了2。リンクはファイル・ディレクトリとも追わず、ルートやその親がリンクなら拒否します。
 - 1ファイル1 MiB（1,048,576バイト）を上限とし、サイズ超過はopen前に除外。最初の最大8 KiBでNUL・制御文字を調べ、バイナリなら残りを読みません。その後も全体の制御文字・不正UTF-8を除外します。増大検知用の1バイトを含め、1ファイルの実読取りは最大1 MiB＋1バイトに制限します。読取り前後のファイル/各親ディレクトリのリンク・種類・識別子、ファイルのサイズ/更新時刻を確認し、可能な環境では `O_NOFOLLOW` も使います。Node標準機能だけでは、同時に別プロセスが繰り返し差し替えるすべての競合を完全には排除できません。変更中のツリーで実行しないでください。
 
-検出項目の出力は、対象内の**相対パス・1始まりの行番号・固定種別**（`python_debuglevel_1` / `url_query_api_key`）だけです。1行・1種別につき1件にまとめ、値・URL・該当行・抜粋・生の例外はstdout/stderr/JSONに出しません。テキストのパスはJSON文字列としてエスケープします。JSONは `findings` / `complete` / `excluded` / 固定の `policy` と、未完了時の固定 `message` です。除外件数は入らなかったディレクトリも1件と数え、その中のファイル数を意味しません。
+検出項目の出力は、対象内の**相対パス・1始まりの行番号・固定種別**（`python_debuglevel_1` / `url_query_api_key` / `js_error_object_output`）だけです。1行・1種別につき1件にまとめ、値・URL・該当行・抜粋・生の例外はstdout/stderr/JSONに出しません。テキストのパスはJSON文字列としてエスケープします。JSONは `findings` / `complete` / `excluded` / 固定の `policy` と、未完了時の固定 `message` です。除外件数は入らなかったディレクトリも1件と数え、その中のファイル数を意味しません。
 
 終了コードは候補あり=1、対応範囲内の候補なし=0、引数・対象不正・読取り失敗・差し替え検知などの検査未完了=2。候補があっても未完了なら2です。リンク・バイナリ・サイズ超過等の意図的除外は件数と方針を案内し、未読を「安全」と扱いません。
 
@@ -344,7 +345,14 @@ secrets are protected.
 `scan-code [directory] [--json]` is a separate, explicit opt-in source-content check;
 omitting the directory uses cwd. The existing filename-only `scan` behavior is unchanged.
 It checks Python `debuglevel=1` assignments/call arguments and same-line literal HTTP(S)
-URL queries with a nonempty, exact lowercase `api_key`. Findings contain only a relative
+URL queries with a nonempty, exact lowercase `api_key`. In the six JS/TS extensions it also
+flags same-line calls passing only the bare name `err`, `error`, or `e` to
+`console.log/error/warn/info/debug` or `JSON.stringify` (`js_error_object_output`).
+This is a name heuristic, not catch-scope analysis: unrelated same-name variables,
+comments and string examples can match; differently named catch arguments are missed.
+Properties, interpolation, other names (such as `data`), multiple arguments, multiline
+calls, aliases and bracket notation are outside this rule. It does not establish a leak
+or an axios error. Findings contain only a relative
 path, a 1-based line number and a fixed type, never values, URLs, snippets or raw errors.
 It reads regular UTF-8 `.py/.js/.mjs/.cjs/.ts/.tsx/.jsx` files only, skips secret/env/key
 and credential-like names (including backups), VCS/dependencies/build output and known

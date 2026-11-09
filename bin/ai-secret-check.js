@@ -19,7 +19,7 @@ const HELP = `${USAGE}
 
 コマンド:
   scan [ディレクトリ]          秘密情報らしいファイル名とエージェントの拒否設定を点検
-  scan-code [ディレクトリ]     明示的opt-inでソース内のdebuglevel/APIクエリ候補を点検（値は出しません）
+  scan-code [ディレクトリ]     明示的opt-inでソース内のdebuglevel/APIクエリ/エラー丸ごと出力候補を点検（値は出しません）
   scan-history [ディレクトリ]  Git履歴に残った .env 系ファイルのパスを点検
   scan-instructions [ディレクトリ] 指示ファイルの場所とサイズだけを点検（中身は読みません）
   scan-logs                   Claude Codeの会話ログから既知の鍵形式を件数だけ報告
