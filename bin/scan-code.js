@@ -6,6 +6,7 @@ const { TextDecoder } = require('node:util');
 
 const MAX_BYTES = 1024 * 1024;
 const PREFIX_BYTES = 8192;
+const TOKEN_ONLY_USERINFO = /^(?:ghp_|github_pat_|gho_|glpat-)[a-zA-Z0-9_-]{10,}$/;
 const EXTENSIONS = new Set(['.py', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
 const EXCLUDED_DIRS = new Set(['.git', '.hg', '.svn', 'node_modules', 'vendor', '.venv', 'venv', 'dist', 'build',
   '.ssh', '.aws', '.azure', '.gnupg', '.config', '.codex', '.claude']);
@@ -129,7 +130,9 @@ function detectRemoteCredentials(contents) {
     const authority = /^[a-z][a-z\d+.-]*:\/\/([^/?#\s\\]+)/i.exec(value)?.[1];
     if (!authority) continue;
     const at = authority.lastIndexOf('@');
-    if (at < 0 || !authority.slice(0, at).includes(':')) continue;
+    if (at < 0) continue;
+    const userinfo = authority.slice(0, at);
+    if (!userinfo.includes(':') && !TOKEN_ONLY_USERINFO.test(userinfo)) continue;
     const hostAndPort = authority.slice(at + 1);
     if (!/^(?:[a-z\d.-]+|\[[a-f\d:.]+\])(?::\d+)?$/i.test(hostAndPort)) continue;
     try {

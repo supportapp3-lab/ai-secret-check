@@ -106,6 +106,38 @@ test('scan-code: root remote URL and push URL report only name, key and host', (
   assert.doesNotMatch(ordinary.stdout + ordinary.stderr, /git_remote_credentials|dummy-git-user|ghp_DUMMY_REMOTE_VALUE/);
 });
 
+test('scan-code: standalone remote tokens are detected without exposing their values', (t) => {
+  const root = fixture(t);
+  const tokenShapes = ['ghp_', 'github_pat_', 'gho_', 'glpat-'].map((prefix) => prefix + 'DUMMYTOKEN');
+  const entries = tokenShapes.map((token, index) => ({
+    url: `https://${token}@host${index}.example.invalid/private.git`,
+    key: index % 2 ? 'pushurl' : 'url',
+    host: `host${index}.example.invalid`,
+  }));
+  write(root, '.git/config', [
+    '[remote "origin"]',
+    ...entries.map(({ url, key }) => `  ${key} = ${url}`),
+    '  url = https://username@example.invalid/private.git',
+    '  url = https://ghp_short@example.invalid/private.git',
+    '  url = https://my-ghp_DUMMYTOKEN@example.invalid/private.git',
+    '  url = https://github.com/owner/repo.git',
+    '  url = git@github.com:owner/repo.git',
+  ].join('\n'));
+  const json = run(root);
+  const plain = run(root, ['scan-code', root]);
+  assert.deepEqual(JSON.parse(json.stdout).findings, entries.map(({ key, host }) => ({
+    type: 'git_remote_credentials', remote: 'origin', key, host,
+  })));
+  assert.equal(plain.stdout.split('\n').filter((line) => line.startsWith('remote ')).length, entries.length);
+  for (const { key, host } of entries) assert.ok(plain.stdout.includes(`remote "origin" の ${key} に認証情報が含まれています（${host}）`));
+  for (const result of [json, plain]) {
+    assert.equal(result.status, 1);
+    assert.equal(result.stderr, '');
+    for (const token of tokenShapes) assert.ok(!result.stdout.includes(token));
+    assert.doesNotMatch(result.stdout, /private\.git|username/);
+  }
+});
+
 test('scan-code: safe remotes, includes and nested Git configs are not reported', (t) => {
   const root = fixture(t);
   const embedded = '[remote "other"]\nurl = https://dummy-user:dummy-secret@example.invalid/private.git\n';
