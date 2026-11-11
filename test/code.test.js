@@ -69,6 +69,77 @@ function inProcess(t, args, patches = {}) {
   return { stdout, stderr, status };
 }
 
+test('scan-code: root remote URL and push URL report only name, key and host', (t) => {
+  const root = fixture(t);
+  const user = 'dummy-git-user';
+  const password = 'ghp_DUMMY_REMOTE_VALUE';
+  const fetch = `https://${user}:${password}@example.invalid:8443/private.git`;
+  write(root, '.git/config', [
+    '[core]',
+    `    url = ${fetch}`,
+    '[remote "origin"]',
+    `    url = ${fetch}`,
+    `    pushurl = "ssh://${user}:${password}@[2001:db8::1]:2222/private.git" # comment`,
+    '[url "https://example.invalid"]',
+    `    url = ${fetch}`,
+    '',
+  ].join('\r\n'));
+  const json = run(root);
+  const plain = run(root, ['scan-code', root]);
+  assert.equal(json.status, 1);
+  assert.equal(plain.status, 1);
+  assert.deepEqual(JSON.parse(json.stdout).findings, [
+    { type: 'git_remote_credentials', remote: 'origin', key: 'url', host: 'example.invalid' },
+    { type: 'git_remote_credentials', remote: 'origin', key: 'pushurl', host: '[2001:db8::1]' },
+  ]);
+  assert.match(plain.stdout, /remote "origin" の url .*example\.invalid/);
+  assert.match(plain.stdout, /remote "origin" の pushurl .*\[2001:db8::1\]/);
+  assert.match(plain.stdout, /git remote set-url/);
+  assert.match(plain.stdout, /git config --global transfer\.credentialsInUrl warn/);
+  for (const result of [json, plain]) {
+    assert.equal(result.stderr, '');
+    for (const hidden of [user, password, fetch, 'private.git', '8443', '2222']) {
+      assert.ok(!(result.stdout + result.stderr).includes(hidden));
+    }
+  }
+  const ordinary = run(root, ['scan', root, '--json']);
+  assert.doesNotMatch(ordinary.stdout + ordinary.stderr, /git_remote_credentials|dummy-git-user|ghp_DUMMY_REMOTE_VALUE/);
+});
+
+test('scan-code: safe remotes, includes and nested Git configs are not reported', (t) => {
+  const root = fixture(t);
+  const embedded = '[remote "other"]\nurl = https://dummy-user:dummy-secret@example.invalid/private.git\n';
+  write(root, '.git/config', [
+    '[remote "origin"]',
+    'url = https://example.invalid/repo.git',
+    'url = https://username@example.invalid/repo.git',
+    'url = git@example.invalid:org/repo.git',
+    'url = https://example.invalid/a:b@example.invalid/repo.git',
+    '[include]',
+    'path = ../included.gitconfig',
+    '',
+  ].join('\n'));
+  write(root, 'included.gitconfig', embedded);
+  write(root, 'nested/.git/config', embedded);
+  const r = run(root);
+  assert.equal(r.status, 0);
+  assert.deepEqual(JSON.parse(r.stdout).findings, []);
+});
+
+test('scan-code: a worktree .git file is never read or resolved', (t) => {
+  const root = fixture(t);
+  const gitFile = write(root, '.git', 'gitdir: other-git-dir\n');
+  write(root, 'other-git-dir/config', '[remote "other"]\nurl = https://dummy-user:dummy-secret@example.invalid/private.git\n');
+  const r = inProcess(t, ['scan-code', root, '--json'], {
+    openSync(original, file, ...args) {
+      assert.notEqual(file, gitFile);
+      return original(file, ...args);
+    },
+  });
+  assert.equal(r.status, 0);
+  assert.deepEqual(JSON.parse(r.stdout).findings, []);
+});
+
 test('scan-code: whole error object calls in every JS/TS extension, text and JSON keep fixed fields only', (t) => {
   const root = fixture(t);
   const source = [
