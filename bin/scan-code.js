@@ -9,7 +9,7 @@ const PREFIX_BYTES = 8192;
 const EXTENSIONS = new Set(['.py', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
 const EXCLUDED_DIRS = new Set(['.git', '.hg', '.svn', 'node_modules', 'vendor', '.venv', 'venv', 'dist', 'build',
   '.ssh', '.aws', '.azure', '.gnupg', '.config', '.codex', '.claude']);
-const POLICY = '明示的opt-in: 許可拡張子のUTF-8ソースのみ。秘密・認証ファイル、VCS・依存・生成物、リンク、バイナリ、1 MiB超は除外。見つからない＝安全ではありません。';
+const POLICY = '明示的opt-in: 許可拡張子のUTF-8ソースと対象直下の .git/config のみ。その他のVCS・秘密・認証ファイル、依存・生成物、リンク、バイナリ、1 MiB超は除外。見つからない＝安全ではありません。';
 const INCOMPLETE = '検査未完了: 引数・対象・読取りを確認できません。除外や未読を安全とは判定しません。';
 
 function excludedName(name, isSensitivePath) {
@@ -111,6 +111,56 @@ function detect(contents, relativePath) {
   return findings;
 }
 
+function detectRemoteCredentials(contents) {
+  const findings = [];
+  let remote = null;
+  // Git joins lines ending in an unescaped backslash before parsing values.
+  const lines = contents.replace(/(^|[^\\])((?:\\\\)*)\\\r?\n/g, '$1$2').split(/\r\n?|\n/);
+  for (const line of lines) {
+    if (/^\s*\[/.test(line)) {
+      const section = /^\s*\[remote[ \t]+"((?:[^"\\]|\\["\\])+)"[ \t]*\][ \t]*(?:[#;].*)?$/i.exec(line);
+      remote = section ? section[1].replace(/\\(["\\])/g, '$1') : null;
+      continue;
+    }
+    if (!remote) continue;
+    const entry = /^\s*(url|pushurl)[ \t]*=[ \t]*(?:"((?:[^"\\]|\\["\\])*)"|([^\s"#;]+))[ \t]*(?:[#;].*)?$/i.exec(line);
+    if (!entry) continue;
+    const value = (entry[2] ?? entry[3]).replace(/\\(["\\])/g, '$1');
+    const authority = /^[a-z][a-z\d+.-]*:\/\/([^/?#\s\\]+)/i.exec(value)?.[1];
+    if (!authority) continue;
+    const at = authority.lastIndexOf('@');
+    if (at < 0 || !authority.slice(0, at).includes(':')) continue;
+    const hostAndPort = authority.slice(at + 1);
+    if (!/^(?:[a-z\d.-]+|\[[a-f\d:.]+\])(?::\d+)?$/i.test(hostAndPort)) continue;
+    try {
+      const { hostname } = new URL('https://' + hostAndPort);
+      findings.push({ type: 'git_remote_credentials', remote, key: entry[1].toLowerCase(), host: hostname });
+    } catch { /* An invalid authority has no reportable hostname. */ }
+  }
+  return findings;
+}
+
+function scanRootGitConfig(root, parents, result) {
+  try {
+    verifyDirectories(parents);
+    const directory = path.join(root, '.git');
+    const directoryStat = fs.lstatSync(directory, { bigint: true, throwIfNoEntry: false });
+    if (!directoryStat?.isDirectory() || directoryStat.isSymbolicLink()) return;
+    const directories = [...parents, { file: directory, stat: directoryStat }];
+    verifyDirectories(directories);
+    const config = path.join(directory, 'config');
+    const stat = fs.lstatSync(config, { bigint: true, throwIfNoEntry: false });
+    if (!stat) return;
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_BYTES) {
+      result.excluded += 1;
+      return;
+    }
+    const contents = readSource(config, stat, directories);
+    if (contents === null) result.excluded += 1;
+    else result.findings.push(...detectRemoteCredentials(contents));
+  } catch { result.complete = false; }
+}
+
 function scanCode(directory, isSensitivePath) {
   const root = path.resolve(directory);
   const result = { findings: [], complete: true, excluded: 0, policy: POLICY };
@@ -147,6 +197,7 @@ function scanCode(directory, isSensitivePath) {
       } catch { result.complete = false; }
     }
   }
+  scanRootGitConfig(root, directories, result);
   visit(root, '', directories);
   if (!result.complete) result.message = INCOMPLETE;
   return result;
@@ -165,7 +216,17 @@ function runScanCode(args, isSensitivePath) {
   }
   if (jsonOutput) console.log(JSON.stringify(result, null, 2));
   else {
-    for (const finding of result.findings) console.log(`${JSON.stringify(finding.path)}:${finding.line} ${finding.type}`);
+    let hasRemoteCredentials = false;
+    for (const finding of result.findings) {
+      if (finding.type === 'git_remote_credentials') {
+        hasRemoteCredentials = true;
+        console.log(`remote ${JSON.stringify(finding.remote)} の ${finding.key} に認証情報が含まれています（${finding.host}）`);
+      } else console.log(`${JSON.stringify(finding.path)}:${finding.line} ${finding.type}`);
+    }
+    if (hasRemoteCredentials) {
+      console.log('git remote set-url [--push] <remote> <clean-url>');
+      console.log('git config --global transfer.credentialsInUrl warn');
+    }
     console.log(POLICY);
     console.log(`意図的除外: ${result.excluded} 件（未読を含みます）。`);
     if (!result.complete) console.error(INCOMPLETE);
