@@ -12,6 +12,12 @@ const EXCLUDED_DIRS = new Set(['.git', '.hg', '.svn', 'node_modules', 'vendor', 
   '.ssh', '.aws', '.azure', '.gnupg', '.config', '.codex', '.claude']);
 const POLICY = '明示的opt-in: 許可拡張子のUTF-8ソースと対象直下の .git/config のみ。その他のVCS・秘密・認証ファイル、依存・生成物、リンク、バイナリ、1 MiB超は除外。見つからない＝安全ではありません。';
 const INCOMPLETE = '検査未完了: 引数・対象・読取りを確認できません。除外や未読を安全とは判定しません。';
+const PYTEST_CONFIGS = [
+  { name: 'pytest.ini', section: 'pytest', format: 'ini' },
+  { name: 'pyproject.toml', section: 'tool.pytest.ini_options', format: 'toml' },
+  { name: 'setup.cfg', section: 'tool:pytest', format: 'ini' },
+  { name: 'tox.ini', section: 'pytest', format: 'ini' },
+];
 
 function excludedName(name, isSensitivePath) {
   const lower = name.toLowerCase();
@@ -112,6 +118,136 @@ function detect(contents, relativePath) {
   return findings;
 }
 
+function stripConfigComment(line) {
+  let quote = null;
+  let escaped = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (escaped) { escaped = false; continue; }
+    if (quote === '"' && char === '\\') { escaped = true; continue; }
+    if (quote) { if (char === quote) quote = null; continue; }
+    if (char === '"' || char === "'") { quote = char; continue; }
+    if (char === '#' && (index === 0 || /\s/.test(line[index - 1]))) return line.slice(0, index);
+  }
+  return line;
+}
+
+function shellTokens(value) {
+  const tokens = [];
+  let token = '';
+  let quote = null;
+  let escaped = false;
+  for (const char of value) {
+    if (escaped) { token += char; escaped = false; continue; }
+    if (char === '\\' && quote !== "'") { escaped = true; continue; }
+    if (quote) { if (char === quote) quote = null; else token += char; continue; }
+    if (char === '"' || char === "'") { quote = char; continue; }
+    if (/\s/.test(char)) {
+      if (token) { tokens.push(token); token = ''; }
+    } else token += char;
+  }
+  if (escaped) token += '\\';
+  if (token) tokens.push(token);
+  return tokens;
+}
+
+function tomlStrings(value) {
+  const strings = [];
+  let index = value.trimStart().startsWith('[') ? 1 : 0;
+  while (index < value.length) {
+    while (index < value.length && /[\s,]/.test(value[index])) index += 1;
+    if (value[index] === ']') break;
+    const quote = value[index];
+    if (quote !== '"' && quote !== "'") { index += 1; continue; }
+    const start = index++;
+    let escaped = false;
+    while (index < value.length) {
+      const char = value[index++];
+      if (escaped) { escaped = false; continue; }
+      if (quote === '"' && char === '\\') { escaped = true; continue; }
+      if (char === quote) break;
+    }
+    const literal = value.slice(start, index);
+    if (quote === '"') {
+      try { strings.push(JSON.parse(literal)); } catch { /* Invalid TOML is not interpreted as an option. */ }
+    } else if (literal.endsWith("'")) strings.push(literal.slice(1, -1));
+  }
+  return strings;
+}
+
+function addoptsTokens(value, format) {
+  if (format === 'toml' && value.trimStart().startsWith('[')) {
+    return tomlStrings(value).flatMap(shellTokens);
+  }
+  if (format === 'toml') {
+    const strings = tomlStrings(value);
+    return strings.length ? shellTokens(strings[0]) : [];
+  }
+  return shellTokens(value);
+}
+
+function findPytestAddopts(contents, config) {
+  const lines = contents.replace(/^\uFEFF/, '').split(/\r\n?|\n/);
+  let section = '';
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = stripConfigComment(lines[index]);
+    const header = /^\s*\[([^\]]+)\]/.exec(line);
+    if (header) { section = header[1].trim(); continue; }
+    if (section.toLowerCase() !== config.section.toLowerCase()) continue;
+    const assignment = config.format === 'toml'
+      ? /^\s*addopts\s*=\s*(.*)$/i.exec(line)
+      : /^\s*addopts\s*(?:=|:)\s*(.*)$/i.exec(line);
+    if (!assignment) continue;
+    const startLine = index + 1;
+    const parts = [assignment[1]];
+    if (config.format === 'ini') {
+      while (index + 1 < lines.length && /^\s+\S/.test(lines[index + 1])
+          && !/^\s*\[/.test(lines[index + 1])) {
+        index += 1;
+        parts.push(stripConfigComment(lines[index]).trim());
+      }
+    } else if (parts[0].trimStart().startsWith('[') && !parts[0].includes(']')) {
+      while (index + 1 < lines.length && !parts.join('\n').includes(']')) {
+        index += 1;
+        parts.push(stripConfigComment(lines[index]));
+      }
+    }
+    return { value: parts.join(' '), line: startLine };
+  }
+  return null;
+}
+
+function enablesShowlocals(tokens) {
+  let enabled = false;
+  for (const token of tokens) {
+    if (token === '-l' || token === '--showlocals') enabled = true;
+    else if (token === '--no-showlocals') enabled = false;
+  }
+  return enabled;
+}
+
+function scanPytestShowlocals(root, parents, result) {
+  for (const config of PYTEST_CONFIGS) {
+    const file = path.join(root, config.name);
+    let stat;
+    try { stat = fs.lstatSync(file, { bigint: true, throwIfNoEntry: false }); }
+    catch { result.complete = false; continue; }
+    if (!stat) continue;
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_BYTES) {
+      result.excluded += 1;
+      continue;
+    }
+    try {
+      const contents = readSource(file, stat, parents);
+      if (contents === null) { result.excluded += 1; continue; }
+      const addopts = findPytestAddopts(contents, config);
+      if (addopts && enablesShowlocals(addoptsTokens(addopts.value, config.format))) {
+        result.findings.push({ path: config.name, line: addopts.line, type: 'pytest_showlocals' });
+      }
+    } catch { result.complete = false; }
+  }
+}
+
 function detectRemoteCredentials(contents) {
   const findings = [];
   let remote = null;
@@ -201,6 +337,7 @@ function scanCode(directory, isSensitivePath) {
     }
   }
   scanRootGitConfig(root, directories, result);
+  scanPytestShowlocals(root, directories, result);
   visit(root, '', directories);
   if (!result.complete) result.message = INCOMPLETE;
   return result;

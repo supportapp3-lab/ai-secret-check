@@ -553,3 +553,34 @@ test('scan-code: unusual relative filenames cannot inject extra text output line
   assert.equal(r.status, 1);
   assert.match(r.stdout, /"odd\\nname\.py":1 python_debuglevel_1/);
 });
+
+test('scan-code: pytest addopts showlocals is detected only in the four root config sections', (t) => {
+  const configs = [
+    { name: 'pytest.ini', section: 'pytest', prefix: '[pytest]\n', positive: 'addopts = -q -l\n' },
+    { name: 'pyproject.toml', section: 'tool.pytest.ini_options', prefix: '[tool.pytest.ini_options]\n', positive: 'addopts = ["-q", "--showlocals"]\n' },
+    { name: 'setup.cfg', section: 'tool:pytest', prefix: '[tool:pytest]\n', positive: 'addopts = -q --showlocals\n' },
+    { name: 'tox.ini', section: 'pytest', prefix: '[pytest]\n', positive: 'addopts = -q --showlocals\n' },
+  ];
+  for (const config of configs) {
+    const root = fixture(t);
+    const file = (body) => write(root, config.name, body);
+    file(`${config.prefix}${config.positive}`);
+    const json = run(root);
+    assert.equal(json.status, 1, config.name);
+    const finding = JSON.parse(json.stdout).findings[0];
+    assert.deepEqual(finding, { path: config.name, line: 2, type: 'pytest_showlocals' });
+    assert.doesNotMatch(json.stdout, /--showlocals|-l/);
+
+    if (config.name === 'pytest.ini') {
+      const plain = run(root, ['scan-code', root]);
+      assert.equal(plain.status, 1);
+      assert.match(plain.stdout, /"pytest\.ini":2 pytest_showlocals/);
+      assert.doesNotMatch(plain.stdout, /--showlocals|-l/);
+    }
+
+    file(`${config.prefix}addopts = --showlocals --no-showlocals\n`);
+    assert.deepEqual(JSON.parse(run(root).stdout).findings, [], `${config.name} no-showlocals override`);
+    file(`${config.prefix}addopts = -lf --log-level DEBUG\n`);
+    assert.deepEqual(JSON.parse(run(root).stdout).findings, [], `${config.name} similar options`);
+  }
+});
