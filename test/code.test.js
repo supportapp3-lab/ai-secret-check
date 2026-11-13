@@ -584,3 +584,43 @@ test('scan-code: pytest addopts showlocals is detected only in the four root con
     assert.deepEqual(JSON.parse(run(root).stdout).findings, [], `${config.name} similar options`);
   }
 });
+
+test('scan-code: curl verbose output with Authorization or user credentials is detected in shell and workflow files', (t) => {
+  const root = fixture(t);
+  write(root, 'scripts/check.SH', [
+    'curl -v -H "Authorization: Bearer DUMMY_SECRET_VALUE" https://example.invalid',
+    'curl -sv -u user:password https://example.invalid',
+    "curl --trace-ascii trace.txt -H 'authorization: dummy' https://example.invalid",
+    'curl https://example.invalid --verbose --user user:password',
+    'curl -s -H "Authorization: dummy" https://example.invalid',
+    'curl -v https://example.invalid',
+    'curl -H "X-Verbose: -v" https://example.invalid',
+  ].join('\n'));
+  write(root, '.github/workflows/check.YAML', [
+    '      - run: curl -v -H "Authorization: Bearer DUMMY_SECRET_VALUE" https://example.invalid',
+    '      - run: curl -sv -u user:password https://example.invalid',
+    "      - run: curl --trace-ascii trace.txt -H 'authorization: dummy' https://example.invalid",
+    '      - run: curl https://example.invalid --verbose --user user:password',
+    '      - run: curl -s -H "Authorization: dummy" https://example.invalid',
+    '      - run: curl -v https://example.invalid',
+    '      - run: curl -H "X-Verbose: -v" https://example.invalid',
+  ].join('\n'));
+  write(root, '.github/workflows/nested/ignored.yml', 'curl -v -u user:password');
+  write(root, 'docs/ignored.txt', 'curl -v -u user:password');
+
+  const json = run(root);
+  assert.equal(json.status, 1);
+  const findings = JSON.parse(json.stdout).findings.filter((finding) => finding.type === 'curl_verbose_auth');
+  assert.deepEqual(findings, [
+    ...[1, 2, 3, 4].map((line) => ({ path: '.github/workflows/check.YAML', line, type: 'curl_verbose_auth' })),
+    ...[1, 2, 3, 4].map((line) => ({ path: 'scripts/check.SH', line, type: 'curl_verbose_auth' })),
+  ]);
+  assert.ok(!(json.stdout + json.stderr).includes('DUMMY_SECRET_VALUE'));
+
+  const plain = run(root, ['scan-code', root]);
+  assert.equal(plain.status, 1);
+  assert.match(plain.stdout, /"scripts\/check\.SH":1 curl_verbose_auth/);
+  assert.match(plain.stdout, /"\.github\/workflows\/check\.YAML":3 curl_verbose_auth/);
+  assert.ok(!(plain.stdout + plain.stderr).includes('user:password'));
+  assert.ok(!(plain.stdout + plain.stderr).includes('DUMMY_SECRET_VALUE'));
+});

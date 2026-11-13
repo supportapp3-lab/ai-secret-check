@@ -91,11 +91,12 @@ node bin/ai-secret-check.js scan-code [ディレクトリ] [--json]
 
 `scan-code` を明示的に実行したときだけ内容を読みます。省略時はcwdで、親フォルダやユーザー設定を内容検査しません。既存の `scan` は引き続きファイル名と拒否設定だけを点検し、出力・JSON・終了コード・親 `.env` の注意書きも変わりません。
 
-- 対象は `.py` / `.js` / `.mjs` / `.cjs` / `.ts` / `.tsx` / `.jsx`（拡張子の大文字小文字は不問）の通常UTF-8ソース。対象ソースを実行・importせず、Node標準機能のみで読み取ります。書込み・削除・自動修正・外部コマンド実行・通信・送信はしません。
+- 対象は `.py` / `.js` / `.mjs` / `.cjs` / `.ts` / `.tsx` / `.jsx` / `.sh` / `.bash`（拡張子の大文字小文字は不問）の通常UTF-8ソースと、対象直下の `.github/workflows/*.yml` / `*.yaml` です。対象ソースを実行・importせず、Node標準機能のみで読み取ります。書込み・削除・自動修正・外部コマンド実行・通信・送信はしません。
 - Pythonのみ `debuglevel = 1` の代入や `f(debuglevel=1)` の呼出し引数を、1行単位で文字照合します。空白・タブに対応。`0` / `10` / `== 1`、通常のlogging DEBUGは非検出です。`1` の後が行末・`,`・`)`・`;`・`#` の場合を扱い、`1.0`・`1e2`・計算式は解釈しません。文字列の例でも、その区切り条件を満たせば検出し得ます。
 - HTTP(S)の文字列リテラルやコメント等に、同じ行で連続して書かれたURLの `?api_key=値` / `&api_key=値` を点検します。クエリ名は小文字の `api_key` 完全一致のみ、値が空・フラグメント内・別のクエリ名・URLでない変数名は非検出。URLスキームは大文字小文字を問いません。引用符・空白・バックスラッシュでURLを区切り、末尾の `)` / `,` / `;` / `]` はソースの区切りとして扱います。`{}` / `$` を含む値は動的プレースホルダーとして対象外です。URLや値の正当性・本物の鍵かどうかを検証する機能ではありません。
 - 対象直下の通常ファイル `.git/config` にある `[remote "<name>"]` の `url` / `pushurl` を点検します。URL の `@` より前に `:` がある場合や、`ghp_` / `github_pat_` / `gho_` / `glpat-` の後に英数字・アンダースコア・ハイフンが10文字以上続くトークンだけがある場合、リモート名・キー名・ホスト名だけを報告します。普通のユーザー名だけでは検出しません。worktree の `.git` ファイル、リンク、入れ子のリポジトリ、include、ユーザー設定は読みません。認証情報を除いた URL へ変更するには `git remote set-url [--push] <remote> <clean-url>`、今後の警告を有効にするには `git config --global transfer.credentialsInUrl warn` を利用できます。
 - JavaScript/TypeScriptの6拡張子では、`console.log/error/warn/info/debug` または `JSON.stringify` に `err` / `error` / `e` を引数1つだけ丸ごと渡す同一行の呼出しを `js_error_object_output` として検出します。空白・タブに対応します。catchとの対応づけをしない**識別子名のヒューリスティック**です。catch外でも同名なら候補になる一方、別名のcatch引数は見逃します。コメント・文字列のサンプルも一致し得て、shadowingや独自のconsole/JSONは区別しません。プロパティ参照（`err.message`、`err.response?.status`）、テンプレート埋込み、`data`など別の名前、複数引数、複数行、別名・ブラケット表記は対象外です。漏洩やaxios由来とは断定しません。
+- シェル `.sh` / `.bash` と対象直下の `.github/workflows/*.yml` / `*.yaml` は、同じ行に `curl` と詳細出力（`-v` / `--verbose` / `--trace` / `--trace-ascii` または `v` を含む短いオプションのまとまり）、さらに `Authorization:` ヘッダー指定（`-H` / `--header`）または `-u` / `--user` がある場合に `curl_verbose_auth` として検出します。1行単位の字句照合で、シェルの展開・行継続・エイリアス・`.curlrc` は解析しません。
 - 対象直下の `pytest.ini` / `tox.ini`（`[pytest]`）、`setup.cfg`（`[tool:pytest]`）、`pyproject.toml`（`[tool.pytest.ini_options]`）の `addopts` も点検し、`-l` / `--showlocals` が有効な場合だけ `pytest_showlocals` を候補にします。後続の `--no-showlocals` は打ち消し、`-lf` など似た別オプションは一致しません。設定値や行の中身は出力しません。
 - 既存の秘密ファイル名判定を優先して除外します。追加で `.env` 始まり、名前に `.env`＋末尾/`.`/`~`/`_`/`-` を含むもの（サンプル・バックアップ・ソース拡張子付きも含む）、秘密鍵名・`.pem` / `.key` / `.p12` / `.pfx` のバックアップも除外。区切り文字付きの `credential(s)` / `secret(s)` / `token(s)` を名前に含むファイル・フォルダも内容検査しません。値を秘匿できる保証としてこの名前判定を使わないでください。
 - 対象直下の上記 `.git/config` 以外は `.git` / `.hg` / `.svn` をたどりません。`node_modules` / `vendor` / `.venv` / `venv`、`dist` / `build`、認証・設定領域 `.ssh` / `.aws` / `.azure` / `.gnupg` / `.config` / `.codex` / `.claude` も除外し、これらを対象ルートやルートの途中に指定した場合は終了2。リンクはファイル・ディレクトリとも追わず、ルートやその親がリンクなら拒否します。
@@ -360,6 +361,12 @@ It also checks `addopts` in the root pytest sections of `pytest.ini`, `tox.ini`,
 `setup.cfg`, and `pyproject.toml` for enabled `-l` / `--showlocals` options
 (`pytest_showlocals`); a later `--no-showlocals` disables the finding. Config values
 are never included in output.
+Shell `.sh` / `.bash` files and direct `.github/workflows/*.yml` / `*.yaml` files are
+also checked for a same-line `curl` invocation combining verbose output (`-v`,
+`--verbose`, `--trace`, `--trace-ascii`, or a short option bundle containing `v`) with
+an `Authorization:` `-H` / `--header` value or `-u` / `--user` (`curl_verbose_auth`).
+This is line-based lexical matching; shell expansion, continuations, aliases and
+`.curlrc` files are not parsed.
 The selected directory's regular `.git/config` is checked for `url` and `pushurl` in
 `[remote "<name>"]` sections. It flags userinfo containing a colon or a standalone
 token starting with `ghp_`, `github_pat_`, `gho_`, or `glpat-` followed by at least ten

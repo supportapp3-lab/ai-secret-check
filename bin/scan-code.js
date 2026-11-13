@@ -114,8 +114,64 @@ function detect(contents, relativePath) {
         && /(?<![\w$.])(?:console[ \t]*\.[ \t]*(?:log|error|warn|info|debug)|JSON[ \t]*\.[ \t]*stringify)[ \t]*\([ \t]*(?:err|error|e)[ \t]*\)/.test(line)) {
       findings.push({ path: relativePath, line: index + 1, type: 'js_error_object_output' });
     }
+    if (['.sh', '.bash'].includes(path.extname(relativePath).toLowerCase())
+        || /^\.github\/workflows\/[^/]+\.(?:yml|yaml)$/i.test(relativePath)) {
+      if (hasCurlVerboseAuth(line)) findings.push({ path: relativePath, line: index + 1, type: 'curl_verbose_auth' });
+    }
   });
   return findings;
+}
+
+function hasCurlVerboseAuth(line) {
+  const tokens = shellTokens(line);
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (tokens[index] !== 'curl') continue;
+    let verbose = false;
+    let authenticated = false;
+    for (let cursor = index + 1; cursor < tokens.length; cursor += 1) {
+      const token = tokens[cursor];
+      if ([';', '|', '||', '&&'].includes(token)) break;
+      if (token === '--') break;
+      if (token === '--verbose' || token === '--trace' || token === '--trace-ascii') {
+        verbose = true;
+        if (token !== '--verbose') cursor += 1;
+        continue;
+      }
+      if (token === '--header' || token === '-H') {
+        const value = tokens[cursor + 1] || '';
+        if (/^Authorization\s*:/i.test(value)) authenticated = true;
+        cursor += 1;
+        continue;
+      }
+      if (token.startsWith('--header=')) {
+        if (/^Authorization\s*:/i.test(token.slice('--header='.length))) authenticated = true;
+        continue;
+      }
+      if (token === '--user' || token === '-u') {
+        authenticated = true;
+        cursor += 1;
+        continue;
+      }
+      if (token.startsWith('--user=')) { authenticated = true; continue; }
+      if (/^-[^-]/.test(token)) {
+        const bundle = token.slice(1);
+        if (bundle.includes('v')) verbose = true;
+        const headerIndex = bundle.indexOf('H');
+        if (headerIndex >= 0) {
+          const attached = bundle.slice(headerIndex + 1);
+          const value = attached || tokens[cursor + 1] || '';
+          if (/^Authorization\s*:/i.test(value)) authenticated = true;
+          if (!attached) cursor += 1;
+        }
+        const userIndex = bundle.indexOf('u');
+        if (userIndex >= 0) authenticated = true;
+        continue;
+      }
+      if (!token.startsWith('-')) continue;
+    }
+    if (verbose && authenticated) return true;
+  }
+  return false;
 }
 
 function stripConfigComment(line) {
@@ -327,7 +383,7 @@ function scanCode(directory, isSensitivePath) {
         const stat = fs.lstatSync(file, { bigint: true });
         if (stat.isSymbolicLink()) { result.excluded += 1; continue; }
         if (stat.isDirectory()) visit(file, relativePath, [...parents, { file, stat }]);
-        else if (!stat.isFile() || !EXTENSIONS.has(path.extname(entry.name).toLowerCase()) || stat.size > MAX_BYTES) result.excluded += 1;
+        else if (!stat.isFile() || !supportedSource(relativePath) || stat.size > MAX_BYTES) result.excluded += 1;
         else {
           const contents = readSource(file, stat, parents);
           if (contents === null) result.excluded += 1;
@@ -341,6 +397,12 @@ function scanCode(directory, isSensitivePath) {
   visit(root, '', directories);
   if (!result.complete) result.message = INCOMPLETE;
   return result;
+}
+
+function supportedSource(relativePath) {
+  const extension = path.extname(relativePath).toLowerCase();
+  return EXTENSIONS.has(extension) || extension === '.sh' || extension === '.bash'
+    || /^\.github\/workflows\/[^/]+\.(?:yml|yaml)$/i.test(relativePath);
 }
 
 function runScanCode(args, isSensitivePath) {
