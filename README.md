@@ -102,7 +102,9 @@ node bin/ai-secret-check.js scan-code [ディレクトリ] [--json]
 - 対象直下の上記 `.git/config` 以外は `.git` / `.hg` / `.svn` をたどりません。`node_modules` / `vendor` / `.venv` / `venv`、`dist` / `build`、認証・設定領域 `.ssh` / `.aws` / `.azure` / `.gnupg` / `.config` / `.codex` / `.claude` も除外し、これらを対象ルートやルートの途中に指定した場合は終了2。リンクはファイル・ディレクトリとも追わず、ルートやその親がリンクなら拒否します。
 - 1ファイル1 MiB（1,048,576バイト）を上限とし、サイズ超過はopen前に除外。最初の最大8 KiBでNUL・制御文字を調べ、バイナリなら残りを読みません。その後も全体の制御文字・不正UTF-8を除外します。増大検知用の1バイトを含め、1ファイルの実読取りは最大1 MiB＋1バイトに制限します。読取り前後のファイル/各親ディレクトリのリンク・種類・識別子、ファイルのサイズ/更新時刻を確認し、可能な環境では `O_NOFOLLOW` も使います。Node標準機能だけでは、同時に別プロセスが繰り返し差し替えるすべての競合を完全には排除できません。変更中のツリーで実行しないでください。
 
-ソースの検出項目は、対象内の**相対パス・1始まりの行番号・固定種別**（`python_debuglevel_1` / `url_query_api_key` / `js_error_object_output`）だけです。GitリモートのJSONには固定種別 `git_remote_credentials` と `remote` / `key` / `host` が入ります。値・URL・該当行・抜粋・生の例外はstdout/stderr/JSONに出しません。テキストのパスとリモート名はJSON文字列としてエスケープします。JSONは `findings` / `complete` / `excluded` / 固定の `policy` と、未完了時の固定 `message` です。除外件数は入らなかったディレクトリも1件と数え、その中のファイル数を意味しません。
+ソースの検出項目は、対象内の**相対パス・1始まりの行番号・固定種別**（`python_debuglevel_1` / `url_query_api_key` / `js_error_object_output` / `subprocess_auth_arg`）だけです。GitリモートのJSONには固定種別 `git_remote_credentials` と `remote` / `key` / `host` が入ります。値・URL・該当行・抜粋・生の例外はstdout/stderr/JSONに出しません。テキストのパスとリモート名はJSON文字列としてエスケープします。JSONは `findings` / `complete` / `excluded` / 固定の `policy` と、未完了時の固定 `message` です。除外件数は入らなかったディレクトリも1件と数え、その中のファイル数を意味しません。
+
+`.py` と6種類のJS/TSファイルでは、同じ行に `subprocess.run` 等の対象Python API、または `execSync` / `execFileSync` / `exec` / `execFile` / `spawn` / `spawnSync` と、文字列内の `Authorization:` または `Bearer ` がある場合に `subprocess_auth_arg` を候補として報告します。`-H "@-"` または `input=` / `input:` を含む行は対象外です。行単位の字句ヒューリスティックで、複数行の呼出しや変数経由は見逃すことがあり、漏洩を断定しません。
 
 終了コードは候補あり=1、対応範囲内の候補なし=0、引数・対象不正・読取り失敗・差し替え検知などの検査未完了=2。候補があっても未完了なら2です。リンク・バイナリ・サイズ超過等の意図的除外は件数と方針を案内し、未読を「安全」と扱いません。
 
@@ -357,6 +359,13 @@ Properties, interpolation, other names (such as `data`), multiple arguments, mul
 calls, aliases and bracket notation are outside this rule. It does not establish a leak
 or an axios error. Source findings contain only a relative
 path, a 1-based line number and a fixed type, never values, URLs, snippets or raw errors.
+The six JS/TS extensions also report `subprocess_auth_arg` when a same-line call to
+`execSync`, `execFileSync`, `exec`, `execFile`, `spawn`, or `spawnSync` contains a string
+with `Authorization:` or `Bearer `. Python reports the same type for same-line
+`subprocess.run`, `call`, `check_call`, `check_output`, and `Popen` calls. Lines using
+`-H "@-"` or `input=` / `input:` are excluded. This is a line-based lexical heuristic: multiline
+calls and arguments supplied through variables can be missed, and a match does not
+prove that a credential was leaked.
 It also checks `addopts` in the root pytest sections of `pytest.ini`, `tox.ini`,
 `setup.cfg`, and `pyproject.toml` for enabled `-l` / `--showlocals` options
 (`pytest_showlocals`); a later `--no-showlocals` disables the finding. Config values
