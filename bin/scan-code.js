@@ -53,6 +53,32 @@ function binary(buffer) {
   return buffer.some((byte) => byte === 0 || (byte < 32 && ![9, 10, 12, 13].includes(byte)) || byte === 127);
 }
 
+function hasAuthMarkerString(line) {
+  const marker = /(?:authorization\s*:|bearer\s+)/i;
+  return [
+    /"(?:\\.|[^"\\])*"/g,
+    /'(?:\\.|[^'\\])*'/g,
+    /`(?:\\.|[^`\\])*`/g,
+  ].some((pattern) => [...line.matchAll(pattern)].some(([value]) => marker.test(value)));
+}
+
+function usesStdinHeader(line) {
+  return /\binput\s*[:=]/.test(line)
+    || /["'`]-H["'`]\s*,\s*["'`]@-["'`]/i.test(line)
+    || /(?:^|[\s,])(?:-H|--header)[ \t]+["'`]?@-["'`]?/i.test(line);
+}
+
+function hasSubprocessAuthArg(line, relativePath) {
+  const extension = path.extname(relativePath).toLowerCase();
+  const invocation = extension === '.py'
+    ? /\bsubprocess\s*\.\s*(?:run|call|check_call|check_output|Popen)\s*\(/i
+    : /(?<![\w$])(?:execSync|execFileSync|exec|execFile|spawn|spawnSync)[ \t]*\(/;
+  return (extension === '.py' || EXTENSIONS.has(extension))
+    && invocation.test(line)
+    && hasAuthMarkerString(line)
+    && !usesStdinHeader(line);
+}
+
 function readSource(file, stat, directories) {
   verifyDirectories(directories);
   const latest = fs.lstatSync(file, { bigint: true });
@@ -113,6 +139,9 @@ function detect(contents, relativePath) {
     if (path.extname(relativePath).toLowerCase() !== '.py'
         && /(?<![\w$.])(?:console[ \t]*\.[ \t]*(?:log|error|warn|info|debug)|JSON[ \t]*\.[ \t]*stringify)[ \t]*\([ \t]*(?:err|error|e)[ \t]*\)/.test(line)) {
       findings.push({ path: relativePath, line: index + 1, type: 'js_error_object_output' });
+    }
+    if (hasSubprocessAuthArg(line, relativePath)) {
+      findings.push({ path: relativePath, line: index + 1, type: 'subprocess_auth_arg' });
     }
     if (['.sh', '.bash'].includes(path.extname(relativePath).toLowerCase())
         || /^\.github\/workflows\/[^/]+\.(?:yml|yaml)$/i.test(relativePath)) {

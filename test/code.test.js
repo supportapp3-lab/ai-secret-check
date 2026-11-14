@@ -624,3 +624,44 @@ test('scan-code: curl verbose output with Authorization or user credentials is d
   assert.ok(!(plain.stdout + plain.stderr).includes('user:password'));
   assert.ok(!(plain.stdout + plain.stderr).includes('DUMMY_SECRET_VALUE'));
 });
+
+test('scan-code: external process calls with Authorization or Bearer arguments are reported without values', (t) => {
+  const root = fixture(t);
+  write(root, 'sample.py', [
+    'subprocess.run(["curl", "-H", f"Authorization: Bearer DUMMY_SECRET_VALUE", url], check=True)',
+    'subprocess.check_output(["curl", "Bearer DUMMY_SECRET_VALUE"])',
+    'subprocess.run(["curl", "-H", "@-", "Authorization: Bearer DUMMY_SECRET_VALUE", url])',
+    'subprocess.run(["curl", "Authorization: Bearer DUMMY_SECRET_VALUE"], input=hdr)',
+    'subprocess.run(["ls"])',
+    'run(["curl", "Authorization: Bearer DUMMY_SECRET_VALUE"])',
+    'fetch(url, { headers: { Authorization: "Bearer DUMMY_SECRET_VALUE" } })',
+  ].join('\n'));
+  for (const extension of ['js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx']) {
+    write(root, `sample.${extension}`, [
+      'execFileSync("curl", ["-H", `Authorization: Bearer DUMMY_SECRET_VALUE`, url]);',
+      'spawnSync("curl", ["-H", "@-", "Authorization: Bearer DUMMY_SECRET_VALUE"]);',
+      'spawnSync("curl", ["Authorization: Bearer DUMMY_SECRET_VALUE"], { input: header });',
+      'fetch(url, { headers: { Authorization: "Bearer DUMMY_SECRET_VALUE" } });',
+    ].join('\n'));
+  }
+
+  const json = run(root);
+  assert.equal(json.status, 1);
+  const findings = JSON.parse(json.stdout).findings.filter((finding) => finding.type === 'subprocess_auth_arg');
+  assert.deepEqual(findings, [
+    { path: 'sample.cjs', line: 1, type: 'subprocess_auth_arg' },
+    { path: 'sample.js', line: 1, type: 'subprocess_auth_arg' },
+    { path: 'sample.jsx', line: 1, type: 'subprocess_auth_arg' },
+    { path: 'sample.mjs', line: 1, type: 'subprocess_auth_arg' },
+    { path: 'sample.py', line: 1, type: 'subprocess_auth_arg' },
+    { path: 'sample.py', line: 2, type: 'subprocess_auth_arg' },
+    { path: 'sample.ts', line: 1, type: 'subprocess_auth_arg' },
+    { path: 'sample.tsx', line: 1, type: 'subprocess_auth_arg' },
+  ]);
+  assert.ok(!(json.stdout + json.stderr).includes('DUMMY_SECRET_VALUE'));
+
+  const plain = run(root, ['scan-code', root]);
+  assert.equal(plain.status, 1);
+  assert.match(plain.stdout, /"sample\.py":1 subprocess_auth_arg/);
+  assert.ok(!(plain.stdout + plain.stderr).includes('DUMMY_SECRET_VALUE'));
+});
