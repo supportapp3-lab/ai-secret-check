@@ -122,6 +122,12 @@ function detect(contents, relativePath) {
         && /\bdebuglevel[ \t]*=(?!=)[ \t]*1(?=[ \t]*(?:$|[,);#]))/.test(line)) {
       findings.push({ path: relativePath, line: index + 1, type: 'python_debuglevel_1' });
     }
+    // Same-line lexical check only: flag output calls that reference requests' sent headers.
+    if (path.extname(relativePath).toLowerCase() === '.py'
+        && /(?:\bprint[ \t]*\(|\.(?:debug|info|warning|error|exception|critical|log)[ \t]*\()/.test(line)
+        && /\.request\.headers\b/.test(line)) {
+      findings.push({ path: relativePath, line: index + 1, type: 'python_request_headers_output' });
+    }
     // Only same-line, literal HTTP(S) URLs. No decoding/interpolation/concatenation.
     const urls = line.match(/https?:\/\/[^\s"'`<>\\]+/gi) || [];
     if (urls.some((url) => {

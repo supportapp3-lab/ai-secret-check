@@ -249,6 +249,32 @@ test('scan-code: Python assignments/call keywords, relative paths and 1-based li
   assert.deepEqual(JSON.parse(r.stdout).findings, [2, 3, 4].map((line) => ({ path: 'src/demo.py', line, type: 'python_debuglevel_1' })));
 });
 
+test('scan-code: Python requests sent headers are reported without values or source lines', (t) => {
+  const root = fixture(t);
+  const secret = 'DUMMY_REQUEST_HEADER_SECRET';
+  write(root, 'src/headers.py', [
+    `print(r.request.headers)  # ${secret}`,
+    `logger.warning("failed %s headers=%s", r.status_code, r.request.headers)  # ${secret}`,
+    `logging.debug(resp.request.headers)  # ${secret}`,
+    'print(r.headers)',
+    'print(r.status_code)',
+    'h = r.request.headers',
+  ].join('\n'));
+
+  const json = run(root);
+  const plain = run(root, ['scan-code', root]);
+  assert.equal(json.status, 1);
+  assert.equal(plain.status, 1);
+  assert.deepEqual(JSON.parse(json.stdout).findings, [1, 2, 3].map((line) => ({
+    path: 'src/headers.py', line, type: 'python_request_headers_output',
+  })));
+  for (const output of [json.stdout, json.stderr, plain.stdout, plain.stderr]) {
+    assert.ok(!output.includes(secret));
+    assert.ok(!output.includes('request.headers'));
+  }
+  assert.match(plain.stdout, /"src\/headers\.py":1 python_request_headers_output/);
+});
+
 test('scan-code: debuglevel 0/10/comparisons/other identifiers and logging do not match', (t) => {
   const root = fixture(t);
   write(root, 'safe.py', 'debuglevel=0\ndebuglevel=10\ndebuglevel == 1\nnotdebuglevel=1\nlogging.basicConfig(level=logging.DEBUG)\ndebuglevel=1.0\ndebuglevel=1e2\ndebuglevel=1+2\n');

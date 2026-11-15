@@ -93,6 +93,7 @@ node bin/ai-secret-check.js scan-code [ディレクトリ] [--json]
 
 - 対象は `.py` / `.js` / `.mjs` / `.cjs` / `.ts` / `.tsx` / `.jsx` / `.sh` / `.bash`（拡張子の大文字小文字は不問）の通常UTF-8ソースと、対象直下の `.github/workflows/*.yml` / `*.yaml` です。対象ソースを実行・importせず、Node標準機能のみで読み取ります。書込み・削除・自動修正・外部コマンド実行・通信・送信はしません。
 - Pythonのみ `debuglevel = 1` の代入や `f(debuglevel=1)` の呼出し引数を、1行単位で文字照合します。空白・タブに対応。`0` / `10` / `== 1`、通常のlogging DEBUGは非検出です。`1` の後が行末・`,`・`)`・`;`・`#` の場合を扱い、`1.0`・`1e2`・計算式は解釈しません。文字列の例でも、その区切り条件を満たせば検出し得ます。
+- Pythonでは、同じ行に `print(` または logging の `.debug(` / `.info(` / `.warning(` / `.error(` / `.exception(` / `.critical(` / `.log(` と `.request.headers` がある場合、`python_request_headers_output` として検出します。送信ヘッダを出力しようとする候補を示す行単位のヒューリスティックです。変数に代入してから出力する場合や複数行の呼出しは見逃し、漏洩を断定しません。行の内容やヘッダ値は表示しません。
 - HTTP(S)の文字列リテラルやコメント等に、同じ行で連続して書かれたURLの `?api_key=値` / `&api_key=値` を点検します。クエリ名は小文字の `api_key` 完全一致のみ、値が空・フラグメント内・別のクエリ名・URLでない変数名は非検出。URLスキームは大文字小文字を問いません。引用符・空白・バックスラッシュでURLを区切り、末尾の `)` / `,` / `;` / `]` はソースの区切りとして扱います。`{}` / `$` を含む値は動的プレースホルダーとして対象外です。URLや値の正当性・本物の鍵かどうかを検証する機能ではありません。
 - 対象直下の通常ファイル `.git/config` にある `[remote "<name>"]` の `url` / `pushurl` を点検します。URL の `@` より前に `:` がある場合や、`ghp_` / `github_pat_` / `gho_` / `glpat-` の後に英数字・アンダースコア・ハイフンが10文字以上続くトークンだけがある場合、リモート名・キー名・ホスト名だけを報告します。普通のユーザー名だけでは検出しません。worktree の `.git` ファイル、リンク、入れ子のリポジトリ、include、ユーザー設定は読みません。認証情報を除いた URL へ変更するには `git remote set-url [--push] <remote> <clean-url>`、今後の警告を有効にするには `git config --global transfer.credentialsInUrl warn` を利用できます。
 - JavaScript/TypeScriptの6拡張子では、`console.log/error/warn/info/debug` または `JSON.stringify` に `err` / `error` / `e` を引数1つだけ丸ごと渡す同一行の呼出しを `js_error_object_output` として検出します。空白・タブに対応します。catchとの対応づけをしない**識別子名のヒューリスティック**です。catch外でも同名なら候補になる一方、別名のcatch引数は見逃します。コメント・文字列のサンプルも一致し得て、shadowingや独自のconsole/JSONは区別しません。プロパティ参照（`err.message`、`err.response?.status`）、テンプレート埋込み、`data`など別の名前、複数引数、複数行、別名・ブラケット表記は対象外です。漏洩やaxios由来とは断定しません。
@@ -102,7 +103,7 @@ node bin/ai-secret-check.js scan-code [ディレクトリ] [--json]
 - 対象直下の上記 `.git/config` 以外は `.git` / `.hg` / `.svn` をたどりません。`node_modules` / `vendor` / `.venv` / `venv`、`dist` / `build`、認証・設定領域 `.ssh` / `.aws` / `.azure` / `.gnupg` / `.config` / `.codex` / `.claude` も除外し、これらを対象ルートやルートの途中に指定した場合は終了2。リンクはファイル・ディレクトリとも追わず、ルートやその親がリンクなら拒否します。
 - 1ファイル1 MiB（1,048,576バイト）を上限とし、サイズ超過はopen前に除外。最初の最大8 KiBでNUL・制御文字を調べ、バイナリなら残りを読みません。その後も全体の制御文字・不正UTF-8を除外します。増大検知用の1バイトを含め、1ファイルの実読取りは最大1 MiB＋1バイトに制限します。読取り前後のファイル/各親ディレクトリのリンク・種類・識別子、ファイルのサイズ/更新時刻を確認し、可能な環境では `O_NOFOLLOW` も使います。Node標準機能だけでは、同時に別プロセスが繰り返し差し替えるすべての競合を完全には排除できません。変更中のツリーで実行しないでください。
 
-ソースの検出項目は、対象内の**相対パス・1始まりの行番号・固定種別**（`python_debuglevel_1` / `url_query_api_key` / `js_error_object_output` / `subprocess_auth_arg`）だけです。GitリモートのJSONには固定種別 `git_remote_credentials` と `remote` / `key` / `host` が入ります。値・URL・該当行・抜粋・生の例外はstdout/stderr/JSONに出しません。テキストのパスとリモート名はJSON文字列としてエスケープします。JSONは `findings` / `complete` / `excluded` / 固定の `policy` と、未完了時の固定 `message` です。除外件数は入らなかったディレクトリも1件と数え、その中のファイル数を意味しません。
+ソースの検出項目は、対象内の**相対パス・1始まりの行番号・固定種別**（`python_debuglevel_1` / `python_request_headers_output` / `url_query_api_key` / `js_error_object_output` / `subprocess_auth_arg`）だけです。GitリモートのJSONには固定種別 `git_remote_credentials` と `remote` / `key` / `host` が入ります。値・URL・該当行・抜粋・生の例外はstdout/stderr/JSONに出しません。テキストのパスとリモート名はJSON文字列としてエスケープします。JSONは `findings` / `complete` / `excluded` / 固定の `policy` と、未完了時の固定 `message` です。除外件数は入らなかったディレクトリも1件と数え、その中のファイル数を意味しません。
 
 `.py` と6種類のJS/TSファイルでは、同じ行に `subprocess.run` 等の対象Python API、または `execSync` / `execFileSync` / `exec` / `execFile` / `spawn` / `spawnSync` と、文字列内の `Authorization:` または `Bearer ` がある場合に `subprocess_auth_arg` を候補として報告します。`-H "@-"` または `input=` / `input:` を含む行は対象外です。行単位の字句ヒューリスティックで、複数行の呼出しや変数経由は見逃すことがあり、漏洩を断定しません。
 
@@ -350,7 +351,13 @@ secrets are protected.
 `scan-code [directory] [--json]` is a separate, explicit opt-in source-content check;
 omitting the directory uses cwd. The existing filename-only `scan` behavior is unchanged.
 It checks Python `debuglevel=1` assignments/call arguments and same-line literal HTTP(S)
-URL queries with a nonempty, exact lowercase `api_key`. In the six JS/TS extensions it also
+URL queries with a nonempty, exact lowercase `api_key`.
+For Python, it also reports `python_request_headers_output` when one line contains
+`print(` or a logging call (`.debug(`, `.info(`, `.warning(`, `.error(`,
+`.exception(`, `.critical(`, or `.log(`) together with `.request.headers`. This
+line-based heuristic reports only the relative path, line number and fixed type; it
+never prints the line or header values. Assigning the headers to a variable first
+or using a multiline call can be missed, and a match does not prove a leak. In the six JS/TS extensions it also
 flags same-line calls passing only the bare name `err`, `error`, or `e` to
 `console.log/error/warn/info/debug` or `JSON.stringify` (`js_error_object_output`).
 This is a name heuristic, not catch-scope analysis: unrelated same-name variables,
