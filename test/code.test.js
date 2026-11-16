@@ -303,6 +303,37 @@ test('scan-code: URL query matches all allowed extensions, only path/line/type i
   assert.match(text.stdout, /"demo\.py":1 url_query_api_key/);
 });
 
+test('scan-code: Python params api_key arguments are detected without exposing values', (t) => {
+  const root = fixture(t);
+  const values = [1, 2, 3, 4, 5, 6, 7].map((n) => `DUMMY_PARAMS_SECRET_${n}`);
+  write(root, 'sample.py', [
+    `requests.get(u, params={"api_key": ${values[0]}})`,
+    `requests.post(u, params={'api_key': ${values[1]}, "q": 1})`,
+    `session.get(u, params=dict(api_key=${values[2]}))`,
+    `requests.get(u, params = {"api_key": ${values[3]}})`,
+    `requests.get(u, headers={"X-API-Key": ${values[4]}})`,
+    `requests.post(u, json={"api_key": ${values[5]}})`,
+    `params = {"api_key": ${values[6]}}`,
+    'requests.get(u, params={"q": 1})',
+    'requests.post(u, data={"api_key": key})',
+  ].join('\n'));
+  write(root, 'sample.js', 'requests.get(u, params={"api_key": key})');
+
+  const expected = [1, 2, 3, 4].map((line) => ({
+    path: 'sample.py', line, type: 'python_params_api_key',
+  }));
+  const json = run(root);
+  assert.equal(json.status, 1);
+  assert.deepEqual(JSON.parse(json.stdout).findings, expected);
+  const text = run(root, ['scan-code', root]);
+  assert.equal(text.status, 1);
+  assert.match(text.stdout, /"sample\.py":1 python_params_api_key/);
+  for (const value of values) {
+    assert.ok(!(json.stdout + json.stderr).includes(value));
+    assert.ok(!(text.stdout + text.stderr).includes(value));
+  }
+});
+
 test('scan-code: empty/other keys/non-URLs/fragments/dynamic placeholders are not matches', (t) => {
   const root = fixture(t);
   write(root, 'safe.js', [
