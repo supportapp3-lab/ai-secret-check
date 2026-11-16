@@ -79,6 +79,18 @@ function hasSubprocessAuthArg(line, relativePath) {
     && !usesStdinHeader(line);
 }
 
+function hasPythonParamsApiKey(line) {
+  // A same-line lexical check for a params keyword argument, not a standalone
+  // variable assignment. Values and call semantics are deliberately ignored.
+  const parameters = /(?:\(|,)[ \t]*params\b[ \t]*=[ \t]*/g;
+  for (const match of line.matchAll(parameters)) {
+    const value = line.slice(match.index + match[0].length);
+    if (/^\{[^}]*?(?:(['"])api_key\1)[ \t]*:/.test(value)
+        || /^dict[ \t]*\([ \t]*api_key[ \t]*=/.test(value)) return true;
+  }
+  return false;
+}
+
 function readSource(file, stat, directories) {
   verifyDirectories(directories);
   const latest = fs.lstatSync(file, { bigint: true });
@@ -140,6 +152,9 @@ function detect(contents, relativePath) {
         return match && !/[{}$]/.test(match[1]);
       });
     })) findings.push({ path: relativePath, line: index + 1, type: 'url_query_api_key' });
+    if (path.extname(relativePath).toLowerCase() === '.py' && hasPythonParamsApiKey(line)) {
+      findings.push({ path: relativePath, line: index + 1, type: 'python_params_api_key' });
+    }
     // Explicitly name-based, not catch-scope analysis. Require exactly one bare
     // argument; property references, interpolation and additional arguments do not match.
     if (path.extname(relativePath).toLowerCase() !== '.py'
