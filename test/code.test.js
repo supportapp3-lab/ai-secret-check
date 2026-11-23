@@ -642,6 +642,60 @@ test('scan-code: pytest addopts showlocals is detected only in the four root con
   }
 });
 
+test('scan-code: MCP JSON literal env values report only the key and source line', (t) => {
+  const root = fixture(t);
+  const secret = 'MCP_JSON_SECRET_NEVER_PRINT';
+  write(root, '.mcp.json', JSON.stringify({ mcpServers: { demo: { env: { API_KEY: secret } } } }, null, 2));
+  for (const args of [['scan-code', root, '--json'], ['scan-code', root]]) {
+    const result = run(root, args);
+    assert.equal(result.status, 1);
+    if (args.includes('--json')) {
+      assert.deepEqual(JSON.parse(result.stdout).findings, [
+        { path: '.mcp.json', line: 5, type: 'mcp_env_value', key: 'API_KEY' },
+      ]);
+    } else assert.match(result.stdout, /\.mcp\.json":5 "API_KEY" mcp_env_value/);
+    assert.ok(!(result.stdout + result.stderr).includes(secret));
+  }
+});
+
+test('scan-code: MCP JSON variable references and headers containing references are safe', (t) => {
+  const root = fixture(t);
+  write(root, '.mcp.json', JSON.stringify({ mcpServers: { demo: {
+    env: { API_KEY: '${API_KEY}', WITH_DEFAULT: '${API_KEY:-default}' },
+    headers: { Authorization: 'Bearer ${TOKEN}' },
+  } } }, null, 2));
+  const result = run(root);
+  assert.equal(result.status, 0);
+  assert.deepEqual(JSON.parse(result.stdout).findings, []);
+});
+
+test('scan-code: TOML env_vars is excluded while literal MCP env values are reported safely', (t) => {
+  const root = fixture(t);
+  const secret = 'MCP_TOML_SECRET_NEVER_PRINT';
+  write(root, '.codex/config.toml', `[mcp_servers.demo.env_vars]\nAPI_KEY = "${secret}"\n\n[mcp_servers.demo.env]\nAPI_KEY = "${secret}"\n`);
+  for (const args of [['scan-code', root, '--json'], ['scan-code', root]]) {
+    const result = run(root, args);
+    assert.equal(result.status, 1);
+    if (args.includes('--json')) {
+      assert.deepEqual(JSON.parse(result.stdout).findings, [
+        { path: '.codex/config.toml', line: 5, type: 'mcp_env_value', key: 'API_KEY' },
+      ]);
+    } else assert.match(result.stdout, /config\.toml":5 "API_KEY" mcp_env_value/);
+    assert.ok(!(result.stdout + result.stderr).includes(secret));
+  }
+});
+
+test('scan-code: MCP configuration links are excluded without following their targets', (t) => {
+  const root = fixture(t);
+  const target = path.join(root, 'target.json');
+  fs.writeFileSync(target, '{"mcpServers":{"demo":{"env":{"API_KEY":"LINK_SECRET_NEVER_READ"}}}}');
+  try { fs.symlinkSync(target, path.join(root, '.mcp.json')); }
+  catch { t.skip('file symlinks unavailable'); return; }
+  const result = run(root);
+  assert.equal(result.status, 0);
+  assert.deepEqual(JSON.parse(result.stdout).findings, []);
+});
+
 test('scan-code: curl verbose output with Authorization or user credentials is detected in shell and workflow files', (t) => {
   const root = fixture(t);
   write(root, 'scripts/check.SH', [

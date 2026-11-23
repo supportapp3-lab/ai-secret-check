@@ -4,7 +4,7 @@ AIコーディングエージェントから `.env` や鍵が読めないかを�
 
 役に立ったら Star を押してもらえると、続けて改善する励みになります。見落としや誤検出は Issue で教えてください。
 
-次の10項目を点検します。
+次の11項目を点検します。
 
 - Claude Codeの `permissions.deny`
 - Cursorの `.cursorignore`
@@ -16,6 +16,7 @@ AIコーディングエージェントから `.env` や鍵が読めないかを�
 - Python起動用ファイルの import 行・ファイル件数（`scan-python-startup`）
 - 作業ディレクトリと親階層にある指示ファイルの場所とサイズ（`scan-instructions`）
 - 明示的opt-inで、ソース内の `debuglevel=1`、URLクエリの `api_key`、エラー丸ごと出力、pytest の `-l` / `--showlocals` 設定の危険候補（`scan-code`）
+- 明示的opt-inで、対象直下の `.mcp.json` と `.codex/config.toml` にある MCP の環境変数・ヘッダー値の候補（`scan-code`）
 
 ## 出力例
 
@@ -102,6 +103,7 @@ node bin/ai-secret-check.js scan-code [ディレクトリ] [--json]
 - 対象直下の `pytest.ini` / `tox.ini`（`[pytest]`）、`setup.cfg`（`[tool:pytest]`）、`pyproject.toml`（`[tool.pytest.ini_options]`）の `addopts` も点検し、`-l` / `--showlocals` が有効な場合だけ `pytest_showlocals` を候補にします。後続の `--no-showlocals` は打ち消し、`-lf` など似た別オプションは一致しません。設定値や行の中身は出力しません。
 - 既存の秘密ファイル名判定を優先して除外します。追加で `.env` 始まり、名前に `.env`＋末尾/`.`/`~`/`_`/`-` を含むもの（サンプル・バックアップ・ソース拡張子付きも含む）、秘密鍵名・`.pem` / `.key` / `.p12` / `.pfx` のバックアップも除外。区切り文字付きの `credential(s)` / `secret(s)` / `token(s)` を名前に含むファイル・フォルダも内容検査しません。値を秘匿できる保証としてこの名前判定を使わないでください。
 - 対象直下の上記 `.git/config` 以外は `.git` / `.hg` / `.svn` をたどりません。`node_modules` / `vendor` / `.venv` / `venv`、`dist` / `build`、認証・設定領域 `.ssh` / `.aws` / `.azure` / `.gnupg` / `.config` / `.codex` / `.claude` も除外し、これらを対象ルートやルートの途中に指定した場合は終了2。リンクはファイル・ディレクトリとも追わず、ルートやその親がリンクなら拒否します。
+- `.mcp.json` の `mcpServers.<name>.env` / `headers` と `.codex/config.toml` の `[mcp_servers.<name>.env]` を、対象直下だけ調べます。空でない固定文字列は値を表示せず、ファイル名・行番号・キーだけを候補として報告します。JSONの環境変数参照だけの値（`${VAR}` / `${VAR:-default}`）と、参照を含むヘッダー値（`Bearer ${VAR}` など）は候補にしません。TOMLの `env_vars` は対象外です。既存のリンク除外と1 MiB上限を適用します。
 - 1ファイル1 MiB（1,048,576バイト）を上限とし、サイズ超過はopen前に除外。最初の最大8 KiBでNUL・制御文字を調べ、バイナリなら残りを読みません。その後も全体の制御文字・不正UTF-8を除外します。増大検知用の1バイトを含め、1ファイルの実読取りは最大1 MiB＋1バイトに制限します。読取り前後のファイル/各親ディレクトリのリンク・種類・識別子、ファイルのサイズ/更新時刻を確認し、可能な環境では `O_NOFOLLOW` も使います。Node標準機能だけでは、同時に別プロセスが繰り返し差し替えるすべての競合を完全には排除できません。変更中のツリーで実行しないでください。
 
 ソースの検出項目は、対象内の**相対パス・1始まりの行番号・固定種別**（`python_debuglevel_1` / `python_request_headers_output` / `url_query_api_key` / `python_params_api_key` / `js_error_object_output` / `subprocess_auth_arg`）だけです。GitリモートのJSONには固定種別 `git_remote_credentials` と `remote` / `key` / `host` が入ります。値・URL・該当行・抜粋・生の例外はstdout/stderr/JSONに出しません。テキストのパスとリモート名はJSON文字列としてエスケープします。JSONは `findings` / `complete` / `excluded` / 固定の `policy` と、未完了時の固定 `message` です。除外件数は入らなかったディレクトリも1件と数え、その中のファイル数を意味しません。
