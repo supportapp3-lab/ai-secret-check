@@ -10,7 +10,7 @@ const TOKEN_ONLY_USERINFO = /^(?:ghp_|github_pat_|gho_|glpat-)[a-zA-Z0-9_-]{10,}
 const EXTENSIONS = new Set(['.py', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
 const EXCLUDED_DIRS = new Set(['.git', '.hg', '.svn', 'node_modules', 'vendor', '.venv', 'venv', 'dist', 'build',
   '.ssh', '.aws', '.azure', '.gnupg', '.config', '.codex', '.claude']);
-const POLICY = '明示的opt-in: 許可拡張子のUTF-8ソースと対象直下の .git/config のみ。その他のVCS・秘密・認証ファイル、依存・生成物、リンク、バイナリ、1 MiB超は除外。見つからない＝安全ではありません。';
+const POLICY = '明示的opt-in: 許可拡張子のUTF-8ソース、対象直下の .git/config / .mcp.json / .codex/config.toml のみ。その他のVCS・秘密・認証ファイル、依存・生成物、リンク、バイナリ、1 MiB超は除外。見つからない＝安全ではありません。';
 const INCOMPLETE = '検査未完了: 引数・対象・読取りを確認できません。除外や未読を安全とは判定しません。';
 const PYTEST_CONFIGS = [
   { name: 'pytest.ini', section: 'pytest', format: 'ini' },
@@ -123,6 +123,127 @@ function readSource(file, stat, directories) {
     try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
     catch { return null; }
   } finally { fs.closeSync(fd); }
+}
+
+function jsonNode(contents, cursor) {
+  while (/\s/.test(contents[cursor.index] || '')) cursor.index += 1;
+  const start = cursor.index;
+  const line = contents.slice(0, start).split(/\r\n?|\n/).length;
+  const char = contents[cursor.index];
+  if (char === '"') {
+    cursor.index += 1;
+    let escaped = false;
+    while (cursor.index < contents.length) {
+      const next = contents[cursor.index++];
+      if (escaped) { escaped = false; continue; }
+      if (next === '\\') { escaped = true; continue; }
+      if (next === '"') break;
+    }
+    return { type: 'string', value: JSON.parse(contents.slice(start, cursor.index)), line };
+  }
+  if (char === '{') {
+    cursor.index += 1;
+    const properties = new Map();
+    while (true) {
+      while (/[\s,]/.test(contents[cursor.index] || '')) cursor.index += 1;
+      if (contents[cursor.index] === '}') { cursor.index += 1; break; }
+      const key = jsonNode(contents, cursor);
+      while (/\s/.test(contents[cursor.index] || '')) cursor.index += 1;
+      if (contents[cursor.index++] !== ':') throw new Error();
+      properties.set(key.value, jsonNode(contents, cursor));
+    }
+    return { type: 'object', properties, line };
+  }
+  if (char === '[') {
+    cursor.index += 1;
+    const items = [];
+    while (true) {
+      while (/[\s,]/.test(contents[cursor.index] || '')) cursor.index += 1;
+      if (contents[cursor.index] === ']') { cursor.index += 1; break; }
+      items.push(jsonNode(contents, cursor));
+    }
+    return { type: 'array', items, line };
+  }
+  const match = /^(?:true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/.exec(contents.slice(cursor.index));
+  if (!match) throw new Error();
+  cursor.index += match[0].length;
+  return { type: 'primitive', line };
+}
+
+function jsonLocations(contents) {
+  // JSON.parse provides the authoritative syntax check; the small second pass only records lines.
+  JSON.parse(contents);
+  const cursor = { index: 0 };
+  const root = jsonNode(contents, cursor);
+  while (/\s/.test(contents[cursor.index] || '')) cursor.index += 1;
+  if (cursor.index !== contents.length) throw new Error();
+  return root;
+}
+
+function isTemplateReference(value) {
+  return /^\$\{[A-Za-z_][A-Za-z0-9_]*(?::-[^}]*)?\}$/.test(value);
+}
+
+function scanMcpJson(root, parents, result) {
+  const file = path.join(root, '.mcp.json');
+  let stat;
+  try { stat = fs.lstatSync(file, { bigint: true, throwIfNoEntry: false }); }
+  catch { result.complete = false; return; }
+  if (!stat) return;
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_BYTES) { result.excluded += 1; return; }
+  try {
+    const contents = readSource(file, stat, parents);
+    if (contents === null) { result.excluded += 1; return; }
+    const document = jsonLocations(contents);
+    const servers = document.type === 'object' ? document.properties.get('mcpServers') : null;
+    if (servers?.type !== 'object') return;
+    for (const server of servers.properties.values()) {
+      if (server.type !== 'object') continue;
+      for (const sectionName of ['env', 'headers']) {
+        const section = server.properties.get(sectionName);
+        if (section?.type !== 'object') continue;
+        for (const [key, value] of section.properties) {
+          if (value.type !== 'string' || !value.value.trim()) continue;
+          const hasReference = /\$\{[^}]+\}/.test(value.value);
+          if (sectionName === 'env' ? isTemplateReference(value.value) : hasReference) continue;
+          result.findings.push({ path: '.mcp.json', line: value.line, type: `mcp_${sectionName}_value`, key });
+        }
+      }
+    }
+  } catch { result.complete = false; }
+}
+
+function scanMcpToml(root, parents, result) {
+  const directory = path.join(root, '.codex');
+  let directoryStat;
+  try { directoryStat = fs.lstatSync(directory, { bigint: true, throwIfNoEntry: false }); }
+  catch { result.complete = false; return; }
+  if (!directoryStat) return;
+  if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) { result.excluded += 1; return; }
+  const directories = [...parents, { file: directory, stat: directoryStat }];
+  const file = path.join(directory, 'config.toml');
+  let stat;
+  try { stat = fs.lstatSync(file, { bigint: true, throwIfNoEntry: false }); }
+  catch { result.complete = false; return; }
+  if (!stat) return;
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_BYTES) { result.excluded += 1; return; }
+  try {
+    const contents = readSource(file, stat, directories);
+    if (contents === null) { result.excluded += 1; return; }
+    let inMcpEnv = false;
+    contents.split(/\r\n?|\n/).forEach((line, index) => {
+      const withoutComment = stripConfigComment(line);
+      const header = /^\s*\[([^\]]+)\]\s*$/.exec(withoutComment);
+      if (header) { inMcpEnv = /^mcp_servers\.(?:"(?:[^"\\]|\\.)*"|[A-Za-z0-9_-]+)\.env$/.test(header[1].trim()); return; }
+      if (!inMcpEnv) return;
+      const assignment = /^\s*([A-Za-z0-9_-]+)\s*=\s*("(?:\\.|[^"\\])*"|'[^']*')\s*$/.exec(withoutComment);
+      if (!assignment) return;
+      let value;
+      try { value = assignment[2][0] === '"' ? JSON.parse(assignment[2]) : assignment[2].slice(1, -1); }
+      catch { return; }
+      if (value.trim()) result.findings.push({ path: '.codex/config.toml', line: index + 1, type: 'mcp_env_value', key: assignment[1] });
+    });
+  } catch { result.complete = false; }
 }
 
 function detect(contents, relativePath) {
@@ -444,6 +565,8 @@ function scanCode(directory, isSensitivePath) {
   }
   scanRootGitConfig(root, directories, result);
   scanPytestShowlocals(root, directories, result);
+  scanMcpJson(root, directories, result);
+  scanMcpToml(root, directories, result);
   visit(root, '', directories);
   if (!result.complete) result.message = INCOMPLETE;
   return result;
@@ -473,7 +596,7 @@ function runScanCode(args, isSensitivePath) {
       if (finding.type === 'git_remote_credentials') {
         hasRemoteCredentials = true;
         console.log(`remote ${JSON.stringify(finding.remote)} の ${finding.key} に認証情報が含まれています（${finding.host}）`);
-      } else console.log(`${JSON.stringify(finding.path)}:${finding.line} ${finding.type}`);
+      } else console.log(`${JSON.stringify(finding.path)}:${finding.line} ${finding.key ? `${JSON.stringify(finding.key)} ` : ''}${finding.type}`);
     }
     if (hasRemoteCredentials) {
       console.log('git remote set-url [--push] <remote> <clean-url>');
