@@ -19,7 +19,7 @@ const HELP = `${USAGE}
 
 コマンド:
   scan [ディレクトリ]          秘密情報らしいファイル名とエージェントの拒否設定を点検
-  scan-code [ディレクトリ]     明示的opt-inでソースとGitリモートURLの危険候補を点検（値は出しません）
+  scan-code [ディレクトリ] [--claude-json]  明示的opt-inでソース・設定の危険候補を点検（値は出しません）
   scan-history [ディレクトリ]  Git履歴に残った .env 系ファイルのパスを点検
   scan-instructions [ディレクトリ] 指示ファイルの場所とサイズだけを点検（中身は読みません）
   scan-logs                   Claude Codeの会話ログから既知の鍵形式を件数だけ報告
@@ -30,6 +30,7 @@ const HELP = `${USAGE}
 
 オプション:
   --json     scan / scan-code / scan-history / scan-instructions の結果をJSONで表示
+  --claude-json  scan-codeで ~/.claude.json のMCPサーバー設定も明示的に確認
   --version  バージョンを表示
   --help     このヘルプを表示`;
 const SAMPLE_ENV_NAMES = new Set(['.env.example', '.env.sample', '.env.template']);

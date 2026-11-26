@@ -1,17 +1,21 @@
 'use strict';
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { TextDecoder } = require('node:util');
 
 const MAX_BYTES = 1024 * 1024;
+const MAX_CLAUDE_JSON_BYTES = 16 * 1024 * 1024;
 const PREFIX_BYTES = 8192;
 const TOKEN_ONLY_USERINFO = /^(?:ghp_|github_pat_|gho_|glpat-)[a-zA-Z0-9_-]{10,}$/;
 const EXTENSIONS = new Set(['.py', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
 const EXCLUDED_DIRS = new Set(['.git', '.hg', '.svn', 'node_modules', 'vendor', '.venv', 'venv', 'dist', 'build',
   '.ssh', '.aws', '.azure', '.gnupg', '.config', '.codex', '.claude']);
 const POLICY = '明示的opt-in: 許可拡張子のUTF-8ソース、対象直下の .git/config / .mcp.json / .codex/config.toml のみ。その他のVCS・秘密・認証ファイル、依存・生成物、リンク、バイナリ、1 MiB超は除外。見つからない＝安全ではありません。';
+const CLAUDE_JSON_POLICY = `${POLICY} --claude-json 指定時だけ ~/.claude.json も確認します（上限16 MiB）。`;
 const INCOMPLETE = '検査未完了: 引数・対象・読取りを確認できません。除外や未読を安全とは判定しません。';
+const CLAUDE_JSON_INCOMPLETE = '判定できません: ~/.claude.json を安全に読み取れません。';
 const PYTEST_CONFIGS = [
   { name: 'pytest.ini', section: 'pytest', format: 'ini' },
   { name: 'pyproject.toml', section: 'tool.pytest.ini_options', format: 'toml' },
@@ -91,19 +95,19 @@ function hasPythonParamsApiKey(line) {
   return false;
 }
 
-function readSource(file, stat, directories) {
+function readSource(file, stat, directories, maxBytes = MAX_BYTES) {
   verifyDirectories(directories);
   const latest = fs.lstatSync(file, { bigint: true });
-  if (!latest.isFile() || latest.isSymbolicLink() || !same(stat, latest) || latest.size > MAX_BYTES) throw new Error();
+  if (!latest.isFile() || latest.isSymbolicLink() || !same(stat, latest) || latest.size > maxBytes) throw new Error();
   const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0));
   try {
     const opened = fs.fstatSync(fd, { bigint: true });
     verifyDirectories(directories);
     const current = fs.lstatSync(file, { bigint: true });
-    if (!opened.isFile() || opened.size > MAX_BYTES || !same(stat, opened)
+    if (!opened.isFile() || opened.size > maxBytes || !same(stat, opened)
         || !current.isFile() || current.isSymbolicLink() || !same(opened, current)) throw new Error();
-    // One extra byte detects growth. Never use an unbounded readFile on source files.
-    const buffer = Buffer.alloc(MAX_BYTES + 1);
+    // One extra byte detects growth. Never use an unbounded readFile here.
+    const buffer = Buffer.alloc(maxBytes + 1);
     let length = fs.readSync(fd, buffer, 0, PREFIX_BYTES, 0);
     if (binary(buffer.subarray(0, length))) return null;
     while (length < buffer.length) {
@@ -111,7 +115,7 @@ function readSource(file, stat, directories) {
       if (!count) break;
       length += count;
     }
-    if (length > MAX_BYTES) throw new Error();
+    if (length > maxBytes) throw new Error();
     verifyDirectories(directories);
     const after = fs.fstatSync(fd, { bigint: true });
     const named = fs.lstatSync(file, { bigint: true });
@@ -204,13 +208,67 @@ function scanMcpJson(root, parents, result) {
         if (section?.type !== 'object') continue;
         for (const [key, value] of section.properties) {
           if (value.type !== 'string' || !value.value.trim()) continue;
-          const hasReference = /\$\{[^}]+\}/.test(value.value);
+          const hasReference = value.value.includes('${');
           if (sectionName === 'env' ? isTemplateReference(value.value) : hasReference) continue;
           result.findings.push({ path: '.mcp.json', line: value.line, type: `mcp_${sectionName}_value`, key });
         }
       }
     }
   } catch { result.complete = false; }
+}
+
+function scanClaudeJson(result) {
+  const unavailable = () => {
+    result.complete = false;
+    result.message = CLAUDE_JSON_INCOMPLETE;
+  };
+  let directories;
+  let file;
+  let stat;
+  try {
+    const home = path.resolve(os.homedir());
+    directories = initialDirectories(home);
+    file = path.join(home, '.claude.json');
+    stat = fs.lstatSync(file, { bigint: true, throwIfNoEntry: false });
+  } catch { unavailable(); return; }
+  if (!stat) return;
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_CLAUDE_JSON_BYTES) {
+    result.excluded += 1;
+    unavailable();
+    return;
+  }
+  try {
+    const contents = readSource(file, stat, directories, MAX_CLAUDE_JSON_BYTES);
+    if (contents === null) throw new Error();
+    const document = jsonLocations(contents);
+    if (document.type !== 'object') return;
+    const inspectServers = (node, scope) => {
+      if (node?.type !== 'object') return;
+      for (const [serverName, server] of node.properties) {
+        if (server.type !== 'object') continue;
+        for (const sectionName of ['env', 'headers']) {
+          const section = server.properties.get(sectionName);
+          if (section?.type !== 'object') continue;
+          for (const [key, value] of section.properties) {
+            if (value.type !== 'string' || !value.value.trim()) continue;
+            const hasReference = value.value.includes('${');
+            if (sectionName === 'env' ? isTemplateReference(value.value) : hasReference) continue;
+            result.findings.push({
+              path: '~/.claude.json', line: value.line, type: `mcp_${sectionName}_value`,
+              scope, server: serverName, key,
+            });
+          }
+        }
+      }
+    };
+    inspectServers(document.properties.get('mcpServers'), 'user');
+    const projects = document.properties.get('projects');
+    if (projects?.type === 'object') {
+      for (const project of projects.properties.values()) {
+        if (project.type === 'object') inspectServers(project.properties.get('mcpServers'), 'local');
+      }
+    }
+  } catch { unavailable(); }
 }
 
 function scanMcpToml(root, parents, result) {
@@ -527,9 +585,9 @@ function scanRootGitConfig(root, parents, result) {
   } catch { result.complete = false; }
 }
 
-function scanCode(directory, isSensitivePath) {
+function scanCode(directory, isSensitivePath, options = {}) {
   const root = path.resolve(directory);
-  const result = { findings: [], complete: true, excluded: 0, policy: POLICY };
+  const result = { findings: [], complete: true, excluded: 0, policy: options.claudeJson ? CLAUDE_JSON_POLICY : POLICY };
   let directories;
   try {
     directories = initialDirectories(root);
@@ -567,8 +625,9 @@ function scanCode(directory, isSensitivePath) {
   scanPytestShowlocals(root, directories, result);
   scanMcpJson(root, directories, result);
   scanMcpToml(root, directories, result);
+  if (options.claudeJson) scanClaudeJson(result);
   visit(root, '', directories);
-  if (!result.complete) result.message = INCOMPLETE;
+  if (!result.complete && !result.message) result.message = INCOMPLETE;
   return result;
 }
 
@@ -580,13 +639,16 @@ function supportedSource(relativePath) {
 
 function runScanCode(args, isSensitivePath) {
   const jsonOutput = args.includes('--json');
-  const positional = args.filter((arg) => arg !== '--json');
+  const claudeJsonCount = args.filter((arg) => arg === '--claude-json').length;
+  const jsonCount = args.filter((arg) => arg === '--json').length;
+  const claudeJson = claudeJsonCount === 1;
+  const positional = args.filter((arg) => arg !== '--json' && arg !== '--claude-json');
   let result;
-  if (args.filter((arg) => arg === '--json').length > 1 || positional.length > 1
+  if (jsonCount > 1 || claudeJsonCount > 1 || positional.length > 1
       || positional.some((arg) => !arg || arg.startsWith('-'))) {
     result = { findings: [], complete: false, excluded: 0, policy: POLICY, message: INCOMPLETE };
   } else {
-    try { result = scanCode(positional[0] || process.cwd(), isSensitivePath); }
+    try { result = scanCode(positional[0] || process.cwd(), isSensitivePath, { claudeJson }); }
     catch { result = { findings: [], complete: false, excluded: 0, policy: POLICY, message: INCOMPLETE }; }
   }
   if (jsonOutput) console.log(JSON.stringify(result, null, 2));
@@ -596,18 +658,20 @@ function runScanCode(args, isSensitivePath) {
       if (finding.type === 'git_remote_credentials') {
         hasRemoteCredentials = true;
         console.log(`remote ${JSON.stringify(finding.remote)} の ${finding.key} に認証情報が含まれています（${finding.host}）`);
+      } else if (finding.scope) {
+        console.log(`${JSON.stringify(finding.path)}:${finding.line} scope=${finding.scope} server=${JSON.stringify(finding.server)} key=${JSON.stringify(finding.key)} ${finding.type}`);
       } else console.log(`${JSON.stringify(finding.path)}:${finding.line} ${finding.key ? `${JSON.stringify(finding.key)} ` : ''}${finding.type}`);
     }
     if (hasRemoteCredentials) {
       console.log('git remote set-url [--push] <remote> <clean-url>');
       console.log('git config --global transfer.credentialsInUrl warn');
     }
-    console.log(POLICY);
+    console.log(result.policy);
     console.log(`意図的除外: ${result.excluded} 件（未読を含みます）。`);
-    if (!result.complete) console.error(INCOMPLETE);
+    if (!result.complete) console.error(result.message || INCOMPLETE);
     else if (!result.findings.length) console.log('対応範囲内の候補は見つかりませんでした。');
   }
   return !result.complete ? 2 : result.findings.length ? 1 : 0;
 }
 
-module.exports = { runScanCode, scanCode, detect, MAX_BYTES, PREFIX_BYTES };
+module.exports = { runScanCode, scanCode, detect, MAX_BYTES, MAX_CLAUDE_JSON_BYTES, PREFIX_BYTES };
