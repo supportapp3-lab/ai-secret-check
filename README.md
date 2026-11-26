@@ -64,6 +64,8 @@ node bin/ai-secret-check.js scan ./対象ディレクトリ
 node bin/ai-secret-check.js scan ./対象ディレクトリ --json
 node bin/ai-secret-check.js scan-code ./対象ディレクトリ
 node bin/ai-secret-check.js scan-code ./対象ディレクトリ --json
+node bin/ai-secret-check.js scan-code ./対象ディレクトリ --claude-json
+node bin/ai-secret-check.js scan-code ./対象ディレクトリ --claude-json --json
 node bin/ai-secret-check.js scan-logs
 node bin/ai-secret-check.js scan-shell-history
 node bin/ai-secret-check.js scan-python-startup
@@ -87,7 +89,7 @@ node bin/ai-secret-check.js --help
 ### ソースと Git リモートの危険候補を点検する（明示的opt-in）
 
 ```sh
-node bin/ai-secret-check.js scan-code [ディレクトリ] [--json]
+node bin/ai-secret-check.js scan-code [ディレクトリ] [--claude-json] [--json]
 ```
 
 `scan-code` を明示的に実行したときだけ内容を読みます。省略時はcwdで、親フォルダやユーザー設定を内容検査しません。既存の `scan` は引き続きファイル名と拒否設定だけを点検し、出力・JSON・終了コード・親 `.env` の注意書きも変わりません。
@@ -104,6 +106,8 @@ node bin/ai-secret-check.js scan-code [ディレクトリ] [--json]
 - 既存の秘密ファイル名判定を優先して除外します。追加で `.env` 始まり、名前に `.env`＋末尾/`.`/`~`/`_`/`-` を含むもの（サンプル・バックアップ・ソース拡張子付きも含む）、秘密鍵名・`.pem` / `.key` / `.p12` / `.pfx` のバックアップも除外。区切り文字付きの `credential(s)` / `secret(s)` / `token(s)` を名前に含むファイル・フォルダも内容検査しません。値を秘匿できる保証としてこの名前判定を使わないでください。
 - 対象直下の上記 `.git/config` 以外は `.git` / `.hg` / `.svn` をたどりません。`node_modules` / `vendor` / `.venv` / `venv`、`dist` / `build`、認証・設定領域 `.ssh` / `.aws` / `.azure` / `.gnupg` / `.config` / `.codex` / `.claude` も除外し、これらを対象ルートやルートの途中に指定した場合は終了2。リンクはファイル・ディレクトリとも追わず、ルートやその親がリンクなら拒否します。
 - `.mcp.json` の `mcpServers.<name>.env` / `headers` と `.codex/config.toml` の `[mcp_servers.<name>.env]` を、対象直下だけ調べます。空でない固定文字列は値を表示せず、ファイル名・行番号・キーだけを候補として報告します。JSONの環境変数参照だけの値（`${VAR}` / `${VAR:-default}`）と、参照を含むヘッダー値（`Bearer ${VAR}` など）は候補にしません。TOMLの `env_vars` は対象外です。既存のリンク除外と1 MiB上限を適用します。
+- `--claude-json` を指定したときだけ、`os.homedir()` 直下の `~/.claude.json` も読み取り専用で確認します。userスコープの `mcpServers.<name>` と、localスコープの `projects.<path>.mcpServers.<name>` にある `env` / `headers` を対象にします。固定文字列は `~/.claude.json`・行番号・scope・サーバー名・キー名だけを報告し、値はテキスト・JSONのどちらにも出しません。envの `${VAR}` / `${VAR:-default}` だけの値と、`${` を含むヘッダー値は候補にしません。オプションを省略した場合はユーザー設定を読みません。
+- `~/.claude.json` は最大16 MiBです。ファイルがない場合は通常どおり完了します。リンク、上限超過、不正JSON、その他の読取り不能時は中身や例外を出さず、「判定できません」として `complete=false`・終了コード2を返します。
 - 1ファイル1 MiB（1,048,576バイト）を上限とし、サイズ超過はopen前に除外。最初の最大8 KiBでNUL・制御文字を調べ、バイナリなら残りを読みません。その後も全体の制御文字・不正UTF-8を除外します。増大検知用の1バイトを含め、1ファイルの実読取りは最大1 MiB＋1バイトに制限します。読取り前後のファイル/各親ディレクトリのリンク・種類・識別子、ファイルのサイズ/更新時刻を確認し、可能な環境では `O_NOFOLLOW` も使います。Node標準機能だけでは、同時に別プロセスが繰り返し差し替えるすべての競合を完全には排除できません。変更中のツリーで実行しないでください。
 
 ソースの検出項目は、対象内の**相対パス・1始まりの行番号・固定種別**（`python_debuglevel_1` / `python_request_headers_output` / `url_query_api_key` / `python_params_api_key` / `js_error_object_output` / `subprocess_auth_arg`）だけです。GitリモートのJSONには固定種別 `git_remote_credentials` と `remote` / `key` / `host` が入ります。値・URL・該当行・抜粋・生の例外はstdout/stderr/JSONに出しません。テキストのパスとリモート名はJSON文字列としてエスケープします。JSONは `findings` / `complete` / `excluded` / 固定の `policy` と、未完了時の固定 `message` です。除外件数は入らなかったディレクトリも1件と数え、その中のファイル数を意味しません。

@@ -662,11 +662,130 @@ test('scan-code: MCP JSON variable references and headers containing references 
   const root = fixture(t);
   write(root, '.mcp.json', JSON.stringify({ mcpServers: { demo: {
     env: { API_KEY: '${API_KEY}', WITH_DEFAULT: '${API_KEY:-default}' },
-    headers: { Authorization: 'Bearer ${TOKEN}' },
+    headers: { Authorization: 'Bearer ${TOKEN}', MALFORMED_REFERENCE: 'Bearer ${TOKEN' },
   } } }, null, 2));
   const result = run(root);
   assert.equal(result.status, 0);
   assert.deepEqual(JSON.parse(result.stdout).findings, []);
+});
+
+test('scan-code: --claude-json reports literal user/local MCP values without printing values', (t) => {
+  const root = fixture(t);
+  const userSecret = 'sk-dummy-USER-000DUMMY';
+  const localSecret = 'Bearer sk-dummy-LOCAL-000DUMMY';
+  write(root, '.claude.json', `{
+  "mcpServers": {
+    "u-lit": {
+      "command": "node",
+      "env": {
+        "API_KEY": "${userSecret}"
+      }
+    }
+  },
+  "projects": {
+    "/tmp/p": {
+      "mcpServers": {
+        "l-hdr": {
+          "type": "http",
+          "url": "https://example.invalid/mcp",
+          "headers": {
+            "Authorization": "${localSecret}"
+          }
+        },
+        "l-ref": {
+          "command": "node",
+          "env": { "API_KEY": "\${API_KEY}" },
+          "headers": { "Authorization": "Bearer \${TOKEN}", "PARTIAL": "Bearer \${TOKEN" }
+        }
+      }
+    }
+  }
+}`);
+
+  const json = run(root, ['scan-code', root, '--claude-json', '--json']);
+  assert.equal(json.status, 1);
+  assert.deepEqual(JSON.parse(json.stdout).findings, [
+    { path: '~/.claude.json', line: 6, type: 'mcp_env_value', scope: 'user', server: 'u-lit', key: 'API_KEY' },
+    { path: '~/.claude.json', line: 17, type: 'mcp_headers_value', scope: 'local', server: 'l-hdr', key: 'Authorization' },
+  ]);
+  assert.ok(!(json.stdout + json.stderr).includes(userSecret));
+  assert.ok(!(json.stdout + json.stderr).includes(localSecret));
+
+  const plain = run(root, ['scan-code', root, '--claude-json']);
+  assert.equal(plain.status, 1);
+  assert.match(plain.stdout, /"~\/\.claude\.json":6 scope=user server="u-lit" key="API_KEY"/);
+  assert.match(plain.stdout, /"~\/\.claude\.json":17 scope=local server="l-hdr" key="Authorization"/);
+  assert.ok(!(plain.stdout + plain.stderr).includes(userSecret));
+  assert.ok(!(plain.stdout + plain.stderr).includes(localSecret));
+
+  const optedOut = run(root, ['scan-code', root, '--json']);
+  assert.equal(optedOut.status, 0);
+  assert.deepEqual(JSON.parse(optedOut.stdout).findings, []);
+});
+
+test('scan-code: --claude-json tolerates a missing file and marks invalid JSON as undetermined', (t) => {
+  const root = fixture(t);
+  const missing = run(root, ['scan-code', root, '--claude-json', '--json']);
+  assert.equal(missing.status, 0);
+  assert.equal(JSON.parse(missing.stdout).complete, true);
+
+  const invalid = 'CLAUDE_JSON_INVALID_SECRET_NEVER_PRINT';
+  write(root, '.claude.json', `{"mcpServers": "${invalid}"`);
+  const result = run(root, ['scan-code', root, '--claude-json', '--json']);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(result.status, 2);
+  assert.equal(parsed.complete, false);
+  assert.match(parsed.message, /判定できません/);
+  assert.ok(!(result.stdout + result.stderr).includes(invalid));
+});
+
+test('scan-code: --claude-json refuses oversized and linked files without reading them', (t) => {
+  const root = fixture(t);
+  const largeFile = write(root, '.claude.json', '');
+  fs.truncateSync(largeFile, 16 * 1024 * 1024 + 1);
+  const large = run(root, ['scan-code', root, '--claude-json', '--json']);
+  assert.equal(large.status, 2);
+  assert.equal(JSON.parse(large.stdout).complete, false);
+  assert.match(JSON.parse(large.stdout).message, /判定できません/);
+
+  fs.unlinkSync(largeFile);
+  write(root, '.claude.json', '{"mcpServers":{}}');
+  const oldProfile = process.env.USERPROFILE;
+  const oldHome = process.env.HOME;
+  process.env.USERPROFILE = root;
+  process.env.HOME = root;
+  let attemptedOpen = false;
+  let linked;
+  try {
+    const claudeFile = path.join(os.homedir(), '.claude.json');
+    linked = inProcess(t, ['scan-code', root, '--claude-json', '--json'], {
+      lstatSync(original, file, ...args) {
+        const stat = original(file, ...args);
+        if (path.resolve(file) !== path.resolve(claudeFile)) return stat;
+        return new Proxy(stat, {
+          get(target, property) {
+            if (property === 'isSymbolicLink') return () => true;
+            const value = Reflect.get(target, property, target);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        });
+      },
+      openSync(original, file, ...args) {
+        if (path.resolve(file) === path.resolve(claudeFile)) attemptedOpen = true;
+        return original(file, ...args);
+      },
+    });
+  } finally {
+    if (oldProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = oldProfile;
+    if (oldHome === undefined) delete process.env.HOME;
+    else process.env.HOME = oldHome;
+  }
+  const parsedLink = JSON.parse(linked.stdout);
+  assert.equal(linked.status, 2);
+  assert.equal(parsedLink.complete, false);
+  assert.match(parsedLink.message, /判定できません/);
+  assert.equal(attemptedOpen, false);
 });
 
 test('scan-code: TOML env_vars is excluded while literal MCP env values are reported safely', (t) => {
