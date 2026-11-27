@@ -185,11 +185,11 @@ globは `*`・`**`・`?` に対応し、文字クラスなど未対応のルー�
 node bin/ai-secret-check.js scan-logs
 ```
 
-Claude Code の `~/.claude/projects/` 配下にある `.jsonl` を読み取り、`sk-ant-`、`sk-`、`ghp_`、`github_pat_`、`AKIA`、`xoxb-` などの既知プレフィックスと、鍵・トークン・秘密情報を表す名前の `KEY=値` 形式を数えます。出力するのはログの相対パス、形式名、件数だけで、検出した値は表示しません。
+Claude Code の `projects/` 配下にある `.jsonl` と、Codex CLI の `sessions/` 配下（再帰）および `archived_sessions/` 直下にある `rollout-*.jsonl` を読み取り、`sk-ant-`、`sk-`、`ghp_`、`github_pat_`、`AKIA`、`xoxb-` などの既知プレフィックスと、鍵・トークン・秘密情報を表す名前の `KEY=値` 形式を数えます。出力するのは保存先が分かる相対パス、形式名、件数だけで、検出した値は表示しません。
 
-ログ保存先は `CLAUDE_CONFIG_DIR` が設定されていればその `projects/`、未設定なら `~/.claude/projects/` です。ディレクトリがない場合は対象0件として終了します。Codex の保存場所はこの版では走査しません（確認済みの JSONL 保存場所がないため対象外）。既知形式以外の鍵や値は検出しません。見つからないことは安全の保証ではありません。
+Claude Code のログ保存先は `CLAUDE_CONFIG_DIR` が設定されていればその `projects/`、未設定なら `~/.claude/projects/` です。Codex CLI は `CODEX_HOME` が設定されていればその `sessions/` と `archived_sessions/`、未設定なら `~/.codex/` 配下を確認します。Codex の `archived_sessions/` は直下の rollout ファイルだけが対象です。存在しないディレクトリは対象0件として扱い、リンクはたどりません。Codex の SQLite ファイル（`state_*.sqlite`、`thread_history_*.sqlite` など）と `history.jsonl` は対象外です。既知形式以外の鍵や値は検出しません。見つからないことは安全の保証ではありません。
 
-この版はローカルの Claude Code ログ保存仕様を前提にした試験版で、ファイルは読み取るだけです。変更・削除・通信はしません。終了コードは一致なし=0、一致あり=1、使い方または読み取りエラー=2 です。テストには一時ディレクトリのダミーログだけを使います。
+この版はローカルの Claude Code / Codex CLI ログ保存仕様を前提にした試験版で、ファイルは読み取るだけです。変更・削除・通信はしません。終了コードは一致なし=0、一致あり=1、使い方または読み取りエラー=2 です。テストには一時ディレクトリのダミーログだけを使います。
 
 ### シェル履歴の鍵点検
 

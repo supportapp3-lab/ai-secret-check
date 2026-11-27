@@ -174,7 +174,7 @@ test('scan-logs reports secret kinds and counts without exposing dummy values', 
   assert.match(result.stdout, /AWSアクセスキーID形式 1件/);
   assert.match(result.stdout, /KEY=値形式 1件/);
   for (const secret of dummySecrets) assert.ok(!result.stdout.includes(secret));
-  assert.match(result.stdout, /Codex の会話ログは保存場所を確認していないため対象外/);
+  assert.match(result.stdout, /Claude Code\/projects\/sample\/session\.jsonl/);
 });
 
 test('scan-logs treats a missing configuration directory as a clean, non-crashing scan', (t) => {
@@ -183,7 +183,7 @@ test('scan-logs treats a missing configuration directory as a clean, non-crashin
   assert.ifError(result.error);
   assert.equal(result.status, 0);
   assert.match(result.stdout, /JSONL 0件/);
-  assert.match(result.stdout, /Codex の会話ログは保存場所を確認していないため対象外/);
+  assert.match(result.stdout, /Claude Code projects\/ と Codex CLI sessions\/・archived_sessions\//);
   assert.doesNotMatch(result.stdout, /undefined|null/);
 });
 

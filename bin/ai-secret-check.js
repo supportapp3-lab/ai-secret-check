@@ -22,7 +22,7 @@ const HELP = `${USAGE}
   scan-code [ディレクトリ] [--claude-json]  明示的opt-inでソース・設定の危険候補を点検（値は出しません）
   scan-history [ディレクトリ]  Git履歴に残った .env 系ファイルのパスを点検
   scan-instructions [ディレクトリ] 指示ファイルの場所とサイズだけを点検（中身は読みません）
-  scan-logs                   Claude Codeの会話ログから既知の鍵形式を件数だけ報告
+  scan-logs                   Claude Code / Codex CLIの会話ログから既知の鍵形式を件数だけ報告
   scan-shell-history          シェル履歴の秘密情報らしい行を件数だけ報告（JSON出力非対応）
   scan-python-startup         Python起動時に自動実行される .pth の import 行などを件数だけ報告（JSON出力非対応）
   scan-package [ディレクトリ]  npmパッケージに入る秘密情報らしいパスを点検（JSON出力非対応）
@@ -334,30 +334,17 @@ function runScan(directory, jsonOutput) {
 }
 
 function scanLogs() {
-  const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(process.env.HOME || os.homedir(), '.claude');
-  const projectsDir = path.join(configDir, 'projects');
+  const homeDir = process.env.HOME || os.homedir();
+  const claudeConfigDir = process.env.CLAUDE_CONFIG_DIR || path.join(homeDir, '.claude');
+  const codexHome = process.env.CODEX_HOME || path.join(homeDir, '.codex');
+  const roots = [
+    { directory: path.join(claudeConfigDir, 'projects'), displayRoot: 'Claude Code/projects', kind: 'claude', recursive: true },
+    { directory: path.join(codexHome, 'sessions'), displayRoot: 'Codex CLI/sessions', kind: 'codex', recursive: true },
+    { directory: path.join(codexHome, 'archived_sessions'), displayRoot: 'Codex CLI/archived_sessions', kind: 'codex', recursive: false },
+  ];
   const findings = [];
   const errors = [];
   let filesScanned = 0;
-  let rootStat;
-
-  try {
-    rootStat = fs.lstatSync(projectsDir);
-  } catch (error) {
-    if (error.code === 'ENOENT') {
-      console.log('Claude Code のログ保存先 ~/.claude/projects/ がありません（JSONL 0件）。');
-      console.log('Codex の会話ログは保存場所を確認していないため対象外です。');
-      console.log('既知の鍵形式だけを確認します。見つからない場合も安全を保証するものではありません。');
-      return 0;
-    }
-    console.error('Claude Code のログ保存先を確認できません。');
-    return 2;
-  }
-
-  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
-    console.error('Claude Code のログ保存先を安全に確認できません。');
-    return 2;
-  }
 
   const patterns = [
     { type: 'Anthropic APIキー形式', regex: /sk-ant-[A-Za-z0-9_-]{10,}/g },
@@ -372,18 +359,19 @@ function scanLogs() {
     },
   ];
 
-  const visit = (directory, relativeDirectory = '') => {
+  const visit = (root, directory, relativeDirectory = '') => {
     let entries;
     try {
       entries = fs.readdirSync(directory, { withFileTypes: true });
     } catch {
-      errors.push(relativeDirectory || '.');
+      errors.push(relativeDirectory ? `${root.displayRoot}/${relativeDirectory}` : root.displayRoot);
       return;
     }
 
     for (const entry of entries) {
       if (entry.isSymbolicLink()) continue;
-      const relativePath = relativeDirectory ? path.join(relativeDirectory, entry.name) : entry.name;
+      const relativePath = (relativeDirectory ? path.join(relativeDirectory, entry.name) : entry.name)
+        .split(path.sep).join('/');
       const fullPath = path.join(directory, entry.name);
       if (entry.isDirectory()) {
         let stat;
@@ -394,10 +382,11 @@ function scanLogs() {
           continue;
         }
         if (stat.isSymbolicLink() || !stat.isDirectory()) continue;
-        visit(fullPath, relativePath);
+        if (root.recursive) visit(root, fullPath, relativePath);
         continue;
       }
       if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
+      if (root.kind === 'codex' && !entry.name.startsWith('rollout-')) continue;
 
       let contents;
       try {
@@ -405,7 +394,7 @@ function scanLogs() {
         if (stat.isSymbolicLink() || !stat.isFile()) continue;
         contents = fs.readFileSync(fullPath, 'utf8');
       } catch {
-        errors.push(relativePath);
+        errors.push(`${root.displayRoot}/${relativePath}`);
         continue;
       }
       filesScanned += 1;
@@ -418,19 +407,33 @@ function scanLogs() {
           counts.set(type, (counts.get(type) || 0) + 1);
         }
       }
-      for (const [type, count] of counts) findings.push({ path: relativePath, type, count });
+      for (const [type, count] of counts) findings.push({ path: `${root.displayRoot}/${relativePath}`, type, count });
     }
   };
 
-  visit(projectsDir);
+  for (const root of roots) {
+    let stat;
+    try {
+      stat = fs.lstatSync(root.directory);
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      errors.push(root.displayRoot);
+      continue;
+    }
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      errors.push(root.displayRoot);
+      continue;
+    }
+    visit(root, root.directory);
+  }
+
   for (const finding of findings) {
     console.log(`${finding.path}: ${finding.type} ${finding.count}件`);
   }
   if (findings.length === 0) {
     console.log(`既知形式の一致はありません（JSONL ${filesScanned}件を確認）。`);
   }
-  console.log('Codex の会話ログは保存場所を確認していないため対象外です。');
-  console.log('Claude Code の ~/.claude/projects/ 配下の JSONL を対象にしました。既知形式以外は検出せず、安全を保証するものではありません。');
+  console.log('Claude Code projects/ と Codex CLI sessions/・archived_sessions/ の JSONL を対象にしました。既知形式以外は検出せず、安全を保証するものではありません。');
   if (errors.length > 0) {
     for (const relativePath of errors) console.error(`${relativePath} を読み取れません。`);
     return 2;
